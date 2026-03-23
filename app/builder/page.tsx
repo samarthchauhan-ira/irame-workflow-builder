@@ -152,7 +152,94 @@ const DEMO: PartialWorkflow = {
   ],
 };
 
+/* ─── Clarification phase types ───────────────────────────────────────── */
+type ClarifyPhase =
+  | 'idle'           // default — no clarification in progress
+  | 'upload'         // user is uploading files
+  | 'checking_files' // AI is checking file sufficiency
+  | 'need_files'     // AI says files are insufficient
+  | 'checking_mapping' // AI is mapping files to steps
+  | 'need_mapping'   // AI can't auto-map, user must help
+  | 'checking_columns' // AI is mapping columns
+  | 'need_columns'   // AI can't auto-map columns, user must help
+  | 'ready';         // all checks passed
+
+interface UploadedFile {
+  file: File;
+  name: string;
+  type: string;
+  headers?: string[];
+  rowCount?: number;
+  sampleRows?: string[][];
+}
+
+interface FileMatch {
+  inputId: string;
+  fileName: string;
+  confidence: string;
+}
+
+interface FileMissing {
+  inputId: string;
+  inputName: string;
+  reason: string;
+}
+
+interface FileMapping {
+  fileName: string;
+  inputId: string;
+  inputName: string;
+  confidence: string;
+  reason: string;
+}
+
+interface Ambiguous {
+  fileName: string;
+  possibleInputs: string[];
+  reason: string;
+}
+
+interface ColMapping {
+  expectedFrom: string;
+  actualColumn: string | null;
+  expectedTo: string;
+  confidence: string;
+  suggestion?: string;
+}
+
+interface StepColMapping {
+  stepId: string;
+  stepName: string;
+  mappings: ColMapping[];
+}
+
+interface UnmappedCol {
+  stepId: string;
+  expectedFrom: string;
+  availableHeaders: string[];
+  suggestion: string;
+}
+
 const TABS = ['Workflow', 'Export', 'Analytics', 'Manager'] as const;
+
+/* ─── Clarification step indicator ─────────────────────────────────────── */
+const CLARIFY_STEPS = [
+  { key: 'files',   label: 'File Check',      icon: '📁' },
+  { key: 'mapping', label: 'File Mapping',     icon: '🔗' },
+  { key: 'columns', label: 'Column Mapping',   icon: '📋' },
+] as const;
+
+function phaseToStepIndex(phase: ClarifyPhase): number {
+  if (phase === 'upload' || phase === 'checking_files' || phase === 'need_files') return 0;
+  if (phase === 'checking_mapping' || phase === 'need_mapping') return 1;
+  if (phase === 'checking_columns' || phase === 'need_columns') return 2;
+  if (phase === 'ready') return 3;
+  return -1;
+}
+
+function isPhaseLoading(phase: ClarifyPhase): boolean {
+  return phase === 'checking_files' || phase === 'checking_mapping' || phase === 'checking_columns';
+}
 
 /* ═══════════════════════════════════════════════════════════════════════ */
 export default function BuilderPage() {
@@ -169,6 +256,20 @@ export default function BuilderPage() {
   const [isDemo, setIsDemo]                 = useState(true);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // Clarification state
+  const [clarifyPhase, setClarifyPhase]           = useState<ClarifyPhase>('idle');
+  const [uploadedFiles, setUploadedFiles]         = useState<UploadedFile[]>([]);
+  const [fileMatches, setFileMatches]             = useState<FileMatch[]>([]);
+  const [fileMissing, setFileMissing]             = useState<FileMissing[]>([]);
+  const [fileMappings, setFileMappings]           = useState<FileMapping[]>([]);
+  const [ambiguousFiles, setAmbiguousFiles]       = useState<Ambiguous[]>([]);
+  const [stepColMappings, setStepColMappings]     = useState<StepColMapping[]>([]);
+  const [unmappedCols, setUnmappedCols]           = useState<UnmappedCol[]>([]);
+  const [clarifyMessage, setClarifyMessage]       = useState('');
+  const [manualMappings, setManualMappings]       = useState<Record<string, string>>({});  // ambiguous file → chosen inputId
+  const [manualColMappings, setManualColMappings] = useState<Record<string, string>>({}); // "stepId:expectedFrom" → chosen header
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   const selectedStep      = workflow?.steps.find(s => s.id === selectedStepId) ?? null;
@@ -176,6 +277,163 @@ export default function BuilderPage() {
   const dataFilesForStep  = (selectedStep?.dataFiles ?? [])
     .map(id => workflow?.inputs.find(i => i.id === id)).filter(Boolean) as Workflow['inputs'];
 
+  /* ─── Parse CSV headers from file ──────────────────────────────── */
+  async function parseFile(file: File): Promise<UploadedFile> {
+    const result: UploadedFile = { file, name: file.name, type: file.type || 'unknown' };
+    if (file.name.endsWith('.csv') || file.type === 'text/csv') {
+      const text = await file.text();
+      const lines = text.split('\n').filter(l => l.trim());
+      if (lines.length > 0) {
+        result.headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+        result.rowCount = lines.length - 1;
+        result.sampleRows = lines.slice(1, 4).map(l => l.split(',').map(c => c.trim().replace(/^"|"$/g, '')));
+      }
+    }
+    return result;
+  }
+
+  /* ─── Handle file upload ───────────────────────────────────────── */
+  async function handleFilesSelected(fileList: FileList) {
+    const parsed: UploadedFile[] = [];
+    for (let i = 0; i < fileList.length; i++) {
+      parsed.push(await parseFile(fileList[i]));
+    }
+    setUploadedFiles(prev => [...prev, ...parsed]);
+  }
+
+  /* ─── Start clarification flow ─────────────────────────────────── */
+  function startClarification() {
+    if (!workflow || uploadedFiles.length === 0) return;
+    setClarifyPhase('checking_files');
+    runFileSufficiencyCheck();
+  }
+
+  /* ─── Phase 1: Check file sufficiency ──────────────────────────── */
+  async function runFileSufficiencyCheck() {
+    setClarifyPhase('checking_files');
+    setClarifyMessage('');
+    try {
+      const res = await fetch('/api/clarify-workflow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phase: 'check_files',
+          workflow: { inputs: workflow!.inputs, steps: workflow!.steps, name: workflow!.name, description: workflow!.description },
+          files: uploadedFiles.map(f => ({ name: f.name, type: f.type, headers: f.headers, rowCount: f.rowCount })),
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      setFileMatches(data.matched ?? []);
+      setFileMissing(data.missing ?? []);
+      setClarifyMessage(data.message ?? '');
+
+      // Add AI message to chat
+      addClarifyChat(data.message ?? (data.sufficient ? 'All required files are present.' : 'Some files are missing.'));
+
+      if (data.sufficient) {
+        // Move to phase 2
+        runFileMappingCheck();
+      } else {
+        setClarifyPhase('need_files');
+      }
+    } catch (e) {
+      setClarifyMessage(`Error: ${e instanceof Error ? e.message : 'Unknown'}`);
+      addClarifyChat(`Error checking files: ${e instanceof Error ? e.message : 'Unknown'}`);
+      setClarifyPhase('need_files');
+    }
+  }
+
+  /* ─── Phase 2: Map files to steps ──────────────────────────────── */
+  async function runFileMappingCheck() {
+    setClarifyPhase('checking_mapping');
+    setClarifyMessage('');
+    try {
+      const res = await fetch('/api/clarify-workflow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phase: 'map_files',
+          workflow: { inputs: workflow!.inputs, steps: workflow!.steps, name: workflow!.name, description: workflow!.description },
+          files: uploadedFiles.map(f => ({ name: f.name, type: f.type, headers: f.headers, rowCount: f.rowCount, sampleRows: f.sampleRows })),
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      setFileMappings(data.fileMappings ?? []);
+      setAmbiguousFiles(data.ambiguous ?? []);
+      setClarifyMessage(data.message ?? '');
+
+      addClarifyChat(data.message ?? (data.mapped ? 'All files mapped to workflow inputs.' : 'Some files need manual mapping.'));
+
+      if (data.mapped) {
+        runColumnMappingCheck();
+      } else {
+        setClarifyPhase('need_mapping');
+      }
+    } catch (e) {
+      setClarifyMessage(`Error: ${e instanceof Error ? e.message : 'Unknown'}`);
+      addClarifyChat(`Error mapping files: ${e instanceof Error ? e.message : 'Unknown'}`);
+      setClarifyPhase('need_mapping');
+    }
+  }
+
+  /* ─── Phase 3: Map columns ─────────────────────────────────────── */
+  async function runColumnMappingCheck() {
+    setClarifyPhase('checking_columns');
+    setClarifyMessage('');
+    try {
+      const res = await fetch('/api/clarify-workflow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phase: 'map_columns',
+          workflow: { inputs: workflow!.inputs, steps: workflow!.steps, name: workflow!.name, description: workflow!.description },
+          files: uploadedFiles.map(f => ({ name: f.name, type: f.type, headers: f.headers, rowCount: f.rowCount, sampleRows: f.sampleRows })),
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      setStepColMappings(data.stepColumnMappings ?? []);
+      setUnmappedCols(data.unmappedColumns ?? []);
+      setClarifyMessage(data.message ?? '');
+
+      addClarifyChat(data.message ?? (data.mapped ? 'All columns mapped successfully!' : 'Some columns need manual mapping.'));
+
+      if (data.mapped) {
+        setClarifyPhase('ready');
+        addClarifyChat('✅ Input ready to enter! All files, mappings, and columns have been verified.');
+      } else {
+        setClarifyPhase('need_columns');
+      }
+    } catch (e) {
+      setClarifyMessage(`Error: ${e instanceof Error ? e.message : 'Unknown'}`);
+      addClarifyChat(`Error mapping columns: ${e instanceof Error ? e.message : 'Unknown'}`);
+      setClarifyPhase('need_columns');
+    }
+  }
+
+  /* ─── Helper: add clarification message to chat ────────────────── */
+  function addClarifyChat(content: string) {
+    setMessages(prev => [...prev, { role: 'assistant', content }]);
+  }
+
+  /* ─── Manual mapping confirmations ─────────────────────────────── */
+  function confirmManualMappings() {
+    // User resolved ambiguous file mappings → advance to column check
+    runColumnMappingCheck();
+  }
+
+  function confirmManualColumns() {
+    // User resolved column mappings → mark ready
+    setClarifyPhase('ready');
+    addClarifyChat('✅ Input ready to enter! All files, mappings, and columns have been verified.');
+  }
+
+  /* ─── Chat send ────────────────────────────────────────────────── */
   async function sendMessage(text?: string) {
     const msg = (text ?? input).trim();
     if (!msg || isLoading) return;
@@ -188,7 +446,7 @@ export default function BuilderPage() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       setMessages([...next, { role: 'assistant', content: data.message ?? 'Done.' }]);
-      if (data.workflow) { setWorkflow(data.workflow); setSavedId(null); }
+      if (data.workflow) { setWorkflow(data.workflow); setSavedId(null); setClarifyPhase('idle'); setUploadedFiles([]); }
     } catch (e) {
       setMessages([...next, { role: 'assistant', content: `Error: ${e instanceof Error ? e.message : 'Unknown'}` }]);
     } finally { setIsLoading(false); }
@@ -209,6 +467,9 @@ export default function BuilderPage() {
     const d = Math.floor((Date.now() - lastSaved.getTime()) / 60000);
     return d === 0 ? 'Last saved just now' : `Last saved ${d}m ago`;
   }, [lastSaved]);
+
+  const currentClarifyStep = phaseToStepIndex(clarifyPhase);
+  const showClarifyWizard = clarifyPhase !== 'idle';
 
   /* ─── render ─────────────────────────────────────────────────────── */
   return (
@@ -324,7 +585,6 @@ export default function BuilderPage() {
           <div className="flex-shrink-0 bg-white border-b border-slate-200 shadow-sm">
             <div className="px-10 py-7 overflow-x-auto">
               <div className="relative min-w-max">
-                {/* Background connecting line — sits at top: 36px (centre of 72px circles) */}
                 <div className="absolute h-[2px] bg-slate-200 z-0 pointer-events-none"
                   style={{ top: 36, left: 40, right: 40 }} />
 
@@ -350,13 +610,9 @@ export default function BuilderPage() {
                     const active = selectedStepId === step.id;
                     return (
                       <Fragment key={step.id}>
-                        {/* spacer that "sits" on the line */}
                         <div className="flex-shrink-0 w-8 mt-9" />
-
                         <button onClick={() => setSelectedStepId(active ? null : step.id)}
                           className="group flex flex-col items-center gap-3 flex-shrink-0 w-[120px] focus:outline-none">
-
-                          {/* Circle */}
                           <div className={`w-[72px] h-[72px] rounded-full flex items-center justify-center transition-all duration-200 flex-shrink-0 ${
                             active
                               ? `bg-slate-900 shadow-2xl ring-[5px] ring-offset-2 ${cfg.ring}`
@@ -364,8 +620,6 @@ export default function BuilderPage() {
                           }`}>
                             <StepIcon type={step.type} active={active} />
                           </div>
-
-                          {/* Label */}
                           <div className="text-center w-full px-1">
                             <p className={`text-sm font-semibold leading-snug mb-1.5 transition-colors ${
                               active ? 'text-slate-900' : 'text-slate-600 group-hover:text-slate-900'
@@ -387,7 +641,6 @@ export default function BuilderPage() {
                     );
                   })}
 
-                  {/* spacer before OUTPUT */}
                   <div className="flex-shrink-0 w-8 mt-9" />
 
                   {/* ── OUTPUT badge ── */}
@@ -417,7 +670,6 @@ export default function BuilderPage() {
               const cfg = STC[selectedStep.type] ?? STC.analyze;
               return (
                 <div className="bg-white overflow-y-auto" style={{ maxHeight: '340px' }}>
-                  {/* Panel header */}
                   <div className={`flex items-center justify-between px-6 py-3.5 border-b border-slate-100 ${cfg.bg}`}>
                     <div className="flex items-center gap-3 min-w-0">
                       <div className={`w-8 h-8 rounded-full bg-white/70 ${cfg.text} text-sm font-bold flex items-center justify-center flex-shrink-0`}>
@@ -437,8 +689,7 @@ export default function BuilderPage() {
 
                   <div className="p-6">
                     <div className="grid grid-cols-2 gap-6">
-
-                      {/* ── Data Files ── */}
+                      {/* Data Files */}
                       <div>
                         <div className="flex items-center gap-2 mb-3">
                           <div className={`w-1 h-4 rounded-full ${cfg.bar}`} />
@@ -469,7 +720,7 @@ export default function BuilderPage() {
                         }
                       </div>
 
-                      {/* ── Column Mappings ── */}
+                      {/* Column Mappings */}
                       <div>
                         <div className="flex items-center gap-2 mb-3">
                           <div className="w-1 h-4 rounded-full bg-emerald-500" />
@@ -498,7 +749,7 @@ export default function BuilderPage() {
                       </div>
                     </div>
 
-                    {/* ── Sub-steps ── */}
+                    {/* Sub-steps */}
                     {selectedStep.subSteps?.length ? (
                       <div className="mt-5 pt-5 border-t border-slate-100">
                         <div className="flex items-center gap-2 mb-3">
@@ -522,92 +773,461 @@ export default function BuilderPage() {
             })()}
           </div>
 
-          {/* ══ Input Configuration (below panel, replaces canvas) ══ */}
+          {/* ══ Bottom section: Input Config OR Clarification Wizard ══ */}
           <div className="flex-1 overflow-y-auto">
             <div className="p-6">
-              <div className="flex items-center justify-between mb-5">
+
+              {/* ── Clarification Wizard ── */}
+              {showClarifyWizard ? (
                 <div>
-                  <h3 className="text-base font-semibold text-slate-800">Input Configuration</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">{workflow?.inputs.length ?? 0} data source{(workflow?.inputs.length ?? 0) !== 1 ? 's' : ''} configured</p>
-                </div>
-                <button className="inline-flex items-center gap-1.5 bg-slate-900 text-white text-sm font-medium px-3.5 py-2 rounded-xl hover:bg-slate-800 transition-colors shadow-sm">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-                  Add Input
-                </button>
-              </div>
-
-              {!workflow || workflow.inputs.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-20 text-center">
-                  <div className="w-16 h-16 rounded-2xl bg-white border-2 border-dashed border-slate-200 flex items-center justify-center mb-4">
-                    <svg className="w-7 h-7 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                  </div>
-                  <p className="text-sm font-medium text-slate-500">No inputs yet</p>
-                  <p className="text-xs text-slate-400 mt-1">Describe your workflow in the chat to auto-generate inputs</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {workflow.inputs.map((inp, idx) => (
-                    <div key={inp.id} className="bg-white rounded-2xl border border-slate-200 hover:border-slate-300 hover:shadow-md transition-all p-5">
-                      {/* Card header */}
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${FILE_BG[inp.type]} ${FILE_TEXT[inp.type]}`}>
-                            <FileIcon type={inp.type} />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-slate-400 font-medium">Input {idx + 1}</span>
-                              {inp.required && <span className="text-[10px] bg-rose-50 text-rose-500 border border-rose-100 px-1.5 py-0.5 rounded font-semibold">Required</span>}
-                            </div>
-                          </div>
-                        </div>
-                        <button className="p-1 text-slate-300 hover:text-red-400 transition-colors rounded-lg">
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                        </button>
-                      </div>
-
-                      <div className="space-y-3">
-                        {/* Field Name */}
-                        <div>
-                          <label className="text-xs font-semibold text-slate-500 block mb-1.5">Field Name</label>
-                          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5">
-                            <svg className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>
-                            <span className="text-sm font-semibold text-slate-800">{inp.name}</span>
-                          </div>
-                        </div>
-
-                        {/* Type */}
-                        <div>
-                          <label className="text-xs font-semibold text-slate-500 block mb-1.5">Type</label>
-                          <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5">
-                            <div className="flex items-center gap-2">
-                              <div className={`w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 ${FILE_BG[inp.type]} ${FILE_TEXT[inp.type]}`}>
-                                <FileIcon type={inp.type} />
+                  {/* Progress Steps */}
+                  <div className="flex items-center justify-center mb-8">
+                    <div className="flex items-center gap-0">
+                      {CLARIFY_STEPS.map((cs, idx) => {
+                        const done = currentClarifyStep > idx;
+                        const active = currentClarifyStep === idx;
+                        const loading = active && isPhaseLoading(clarifyPhase);
+                        return (
+                          <Fragment key={cs.key}>
+                            {idx > 0 && (
+                              <div className={`w-20 h-0.5 ${done ? 'bg-emerald-400' : 'bg-slate-200'} transition-colors`} />
+                            )}
+                            <div className="flex flex-col items-center gap-2">
+                              <div className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold transition-all duration-300 ${
+                                done
+                                  ? 'bg-emerald-100 text-emerald-600 ring-4 ring-emerald-50'
+                                  : active
+                                    ? `bg-indigo-100 text-indigo-600 ring-4 ring-indigo-50 ${loading ? 'animate-pulse' : ''}`
+                                    : 'bg-slate-100 text-slate-400'
+                              }`}>
+                                {done ? (
+                                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
+                                ) : (
+                                  <span>{cs.icon}</span>
+                                )}
                               </div>
-                              <span className="text-sm text-slate-700 font-medium">
-                                {inp.type === 'csv' ? 'CSV File' : inp.type === 'pdf' ? 'PDF Document' : inp.type === 'image' ? 'Image File' : 'SQL Database'}
+                              <span className={`text-xs font-semibold ${done ? 'text-emerald-600' : active ? 'text-indigo-600' : 'text-slate-400'}`}>
+                                {cs.label}
                               </span>
                             </div>
-                            <svg className="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                          </Fragment>
+                        );
+                      })}
+                      {/* Ready indicator */}
+                      <div className={`w-20 h-0.5 ${clarifyPhase === 'ready' ? 'bg-emerald-400' : 'bg-slate-200'} transition-colors`} />
+                      <div className="flex flex-col items-center gap-2">
+                        <div className={`w-12 h-12 rounded-full flex items-center justify-center text-lg transition-all duration-300 ${
+                          clarifyPhase === 'ready'
+                            ? 'bg-emerald-500 text-white ring-4 ring-emerald-100 shadow-lg'
+                            : 'bg-slate-100 text-slate-400'
+                        }`}>
+                          {clarifyPhase === 'ready' ? (
+                            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                          ) : '🚀'}
+                        </div>
+                        <span className={`text-xs font-semibold ${clarifyPhase === 'ready' ? 'text-emerald-600' : 'text-slate-400'}`}>
+                          Ready
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Phase Content */}
+                  {isPhaseLoading(clarifyPhase) && (
+                    <div className="flex flex-col items-center py-12">
+                      <div className="w-16 h-16 rounded-full bg-indigo-50 flex items-center justify-center mb-4 animate-spin-slow">
+                        <svg className="w-8 h-8 text-indigo-500 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                      </div>
+                      <p className="text-sm font-semibold text-slate-700">
+                        {clarifyPhase === 'checking_files' && 'Ira is checking if all required files are provided…'}
+                        {clarifyPhase === 'checking_mapping' && 'Ira is mapping files to workflow steps…'}
+                        {clarifyPhase === 'checking_columns' && 'Ira is mapping CSV columns to expected fields…'}
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">Powered by Claude Opus 4.5</p>
+                    </div>
+                  )}
+
+                  {/* Need more files */}
+                  {clarifyPhase === 'need_files' && (
+                    <div className="max-w-2xl mx-auto">
+                      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 mb-5">
+                        <div className="flex items-start gap-3">
+                          <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+                            <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
                           </div>
-                        </div>
-
-                        {/* Description */}
-                        <div>
-                          <label className="text-xs font-semibold text-slate-500 block mb-1.5">Description</label>
-                          <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-600 leading-relaxed">{inp.description}</div>
-                        </div>
-
-                        {/* Required toggle */}
-                        <div className="flex items-center justify-between pt-1">
-                          <label className="text-xs font-semibold text-slate-500">Required</label>
-                          <div className={`relative w-11 h-6 rounded-full flex-shrink-0 transition-colors ${inp.required ? 'bg-indigo-600' : 'bg-slate-200'}`}>
-                            <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${inp.required ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                          <div>
+                            <p className="text-sm font-semibold text-amber-800 mb-1">Missing Files</p>
+                            <p className="text-xs text-amber-700 leading-relaxed">{clarifyMessage}</p>
                           </div>
                         </div>
                       </div>
+
+                      {fileMissing.length > 0 && (
+                        <div className="space-y-2 mb-5">
+                          {fileMissing.map((m, i) => (
+                            <div key={i} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-red-100">
+                              <div className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center flex-shrink-0">
+                                <svg className="w-4 h-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold text-slate-700">{m.inputName}</p>
+                                <p className="text-xs text-slate-400">{m.reason}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {fileMatches.length > 0 && (
+                        <div className="space-y-2 mb-5">
+                          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Matched Files</p>
+                          {fileMatches.map((m, i) => (
+                            <div key={i} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-emerald-100">
+                              <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center flex-shrink-0">
+                                <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                              </div>
+                              <div className="flex-1">
+                                <p className="text-sm font-medium text-slate-700">{m.fileName}</p>
+                                <p className="text-xs text-slate-400">→ {workflow?.inputs.find(i => i.id === m.inputId)?.name ?? m.inputId}</p>
+                              </div>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${m.confidence === 'high' ? 'bg-emerald-100 text-emerald-700' : m.confidence === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>{m.confidence}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-3">
+                        <label className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-white border-2 border-dashed border-slate-300 rounded-xl cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/30 transition-colors">
+                          <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                          <span className="text-sm font-medium text-slate-600">Upload missing files</span>
+                          <input ref={fileInputRef} type="file" multiple className="hidden"
+                            onChange={e => { if (e.target.files) handleFilesSelected(e.target.files); }} />
+                        </label>
+                        <button onClick={runFileSufficiencyCheck}
+                          className="px-4 py-3 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-colors">
+                          Re-check
+                        </button>
+                      </div>
                     </div>
-                  ))}
+                  )}
+
+                  {/* Need file mapping */}
+                  {clarifyPhase === 'need_mapping' && (
+                    <div className="max-w-2xl mx-auto">
+                      <div className="bg-blue-50 border border-blue-200 rounded-2xl p-5 mb-5">
+                        <div className="flex items-start gap-3">
+                          <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                            <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-blue-800 mb-1">Manual Mapping Needed</p>
+                            <p className="text-xs text-blue-700 leading-relaxed">{clarifyMessage}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Confident mappings */}
+                      {fileMappings.filter(m => m.confidence !== 'low').length > 0 && (
+                        <div className="mb-5">
+                          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Auto-mapped</p>
+                          <div className="space-y-2">
+                            {fileMappings.filter(m => m.confidence !== 'low').map((m, i) => (
+                              <div key={i} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-emerald-100">
+                                <svg className="w-4 h-4 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                <span className="text-sm text-slate-700 font-medium">{m.fileName}</span>
+                                <svg className="w-4 h-3 text-slate-300" viewBox="0 0 16 10" fill="none"><path d="M0 5h12m-3-3.5L13 5l-4 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                <span className="text-sm text-indigo-700 font-medium">{m.inputName}</span>
+                                <span className="text-[10px] text-slate-400 ml-auto">{m.reason}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Ambiguous — need user input */}
+                      {ambiguousFiles.length > 0 && (
+                        <div className="mb-5">
+                          <p className="text-xs font-bold text-amber-600 uppercase tracking-wider mb-2">Needs Your Input</p>
+                          <div className="space-y-3">
+                            {ambiguousFiles.map((a, i) => (
+                              <div key={i} className="p-4 bg-white rounded-xl border border-amber-200">
+                                <p className="text-sm font-semibold text-slate-700 mb-1">{a.fileName}</p>
+                                <p className="text-xs text-slate-400 mb-3">{a.reason}</p>
+                                <div className="flex flex-wrap gap-2">
+                                  {a.possibleInputs.map(inputId => {
+                                    const inp = workflow?.inputs.find(i => i.id === inputId);
+                                    const selected = manualMappings[a.fileName] === inputId;
+                                    return (
+                                      <button key={inputId}
+                                        onClick={() => setManualMappings(prev => ({ ...prev, [a.fileName]: inputId }))}
+                                        className={`px-3 py-2 text-xs font-medium rounded-lg border transition-all ${
+                                          selected
+                                            ? 'bg-indigo-600 text-white border-indigo-600'
+                                            : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-400'
+                                        }`}>
+                                        {inp?.name ?? inputId}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <button onClick={confirmManualMappings}
+                        disabled={ambiguousFiles.some(a => !manualMappings[a.fileName])}
+                        className="w-full px-4 py-3 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-40 transition-colors">
+                        Confirm Mappings & Continue
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Need column mapping */}
+                  {clarifyPhase === 'need_columns' && (
+                    <div className="max-w-3xl mx-auto">
+                      <div className="bg-purple-50 border border-purple-200 rounded-2xl p-5 mb-5">
+                        <div className="flex items-start gap-3">
+                          <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+                            <svg className="w-5 h-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-purple-800 mb-1">Column Mapping Review</p>
+                            <p className="text-xs text-purple-700 leading-relaxed">{clarifyMessage}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Auto-mapped columns by step */}
+                      {stepColMappings.map((scm) => {
+                        const stepCfg = STC[(workflow?.steps.find(s => s.id === scm.stepId)?.type ?? 'analyze') as StepType] ?? STC.analyze;
+                        return (
+                          <div key={scm.stepId} className="mb-5 bg-white rounded-2xl border border-slate-200 overflow-hidden">
+                            <div className={`px-5 py-3 ${stepCfg.bg} border-b border-slate-100`}>
+                              <p className={`text-sm font-bold ${stepCfg.text}`}>{scm.stepName}</p>
+                            </div>
+                            <div className="p-4 space-y-2">
+                              {scm.mappings.map((cm, j) => {
+                                const mapped = cm.confidence !== 'unmapped' && cm.actualColumn;
+                                const key = `${scm.stepId}:${cm.expectedFrom}`;
+                                return (
+                                  <div key={j} className={`flex items-center gap-3 p-3 rounded-xl border ${mapped ? 'border-emerald-100 bg-emerald-50/30' : 'border-amber-200 bg-amber-50/30'}`}>
+                                    <span className="px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg text-[11px] font-mono font-semibold flex-shrink-0">{cm.expectedFrom}</span>
+                                    <svg className="w-5 h-3 text-slate-300 flex-shrink-0" viewBox="0 0 20 10" fill="none"><path d="M0 5h16m-3-3.5L17 5l-4 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                    {mapped ? (
+                                      <span className="px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-[11px] font-mono font-semibold">{cm.actualColumn}</span>
+                                    ) : (
+                                      <select
+                                        value={manualColMappings[key] ?? ''}
+                                        onChange={e => setManualColMappings(prev => ({ ...prev, [key]: e.target.value }))}
+                                        className="text-xs border border-amber-300 rounded-lg px-2 py-1.5 bg-white text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:outline-none min-w-[150px]"
+                                      >
+                                        <option value="">Select column…</option>
+                                        {uploadedFiles.flatMap(f => f.headers ?? []).filter((h, i, arr) => arr.indexOf(h) === i).map(h => (
+                                          <option key={h} value={h}>{h}</option>
+                                        ))}
+                                      </select>
+                                    )}
+                                    <span className="text-[10px] text-slate-400 flex-1 truncate">{cm.suggestion ?? cm.expectedTo}</span>
+                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                                      cm.confidence === 'high' ? 'bg-emerald-100 text-emerald-700' :
+                                      cm.confidence === 'medium' ? 'bg-amber-100 text-amber-700' :
+                                      cm.confidence === 'low' ? 'bg-orange-100 text-orange-700' :
+                                      'bg-red-100 text-red-700'
+                                    }`}>{cm.confidence}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      <button onClick={confirmManualColumns}
+                        className="w-full px-4 py-3 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-colors">
+                        Confirm Column Mappings
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Ready */}
+                  {clarifyPhase === 'ready' && (
+                    <div className="flex flex-col items-center py-12">
+                      <div className="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mb-5 shadow-lg ring-8 ring-emerald-50">
+                        <svg className="w-10 h-10 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                      </div>
+                      <h3 className="text-xl font-bold text-slate-900 mb-2">Input Ready!</h3>
+                      <p className="text-sm text-slate-500 mb-6 text-center max-w-md">
+                        All files are verified, mappings confirmed, and columns aligned. You can now run the workflow or save it.
+                      </p>
+                      <div className="flex items-center gap-3">
+                        <button onClick={handleSave}
+                          className="px-5 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-xl hover:bg-slate-800 transition-colors">
+                          Save Workflow
+                        </button>
+                        <button onClick={() => { setClarifyPhase('idle'); }}
+                          className="px-5 py-2.5 bg-white text-slate-700 text-sm font-semibold rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors">
+                          Back to Config
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+              ) : (
+                /* ── Default: Upload + Input Configuration ── */
+                <div>
+                  {/* Upload Section */}
+                  {workflow && (
+                    <div className="mb-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <h3 className="text-base font-semibold text-slate-800">Upload Files & Verify</h3>
+                          <p className="text-xs text-slate-400 mt-0.5">Upload your data files and let Ira verify everything</p>
+                        </div>
+                        {uploadedFiles.length > 0 && (
+                          <button onClick={startClarification}
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-colors shadow-sm">
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                            Verify with Ira
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Drop zone */}
+                      <label
+                        className="flex flex-col items-center justify-center p-6 bg-white border-2 border-dashed border-slate-300 rounded-2xl cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/20 transition-all mb-4"
+                        onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('border-indigo-400', 'bg-indigo-50/30'); }}
+                        onDragLeave={e => { e.currentTarget.classList.remove('border-indigo-400', 'bg-indigo-50/30'); }}
+                        onDrop={e => { e.preventDefault(); e.currentTarget.classList.remove('border-indigo-400', 'bg-indigo-50/30'); if (e.dataTransfer.files) handleFilesSelected(e.dataTransfer.files); }}
+                      >
+                        <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mb-3">
+                          <svg className="w-6 h-6 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                        </div>
+                        <p className="text-sm font-medium text-slate-600">Drop files here or click to upload</p>
+                        <p className="text-xs text-slate-400 mt-1">CSV, PDF, images — any data files for this workflow</p>
+                        <input type="file" multiple className="hidden"
+                          onChange={e => { if (e.target.files) handleFilesSelected(e.target.files); }} />
+                      </label>
+
+                      {/* Uploaded file list */}
+                      {uploadedFiles.length > 0 && (
+                        <div className="space-y-2">
+                          {uploadedFiles.map((uf, i) => (
+                            <div key={i} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-slate-200">
+                              <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                                uf.name.endsWith('.csv') ? 'bg-emerald-100 text-emerald-600' :
+                                uf.name.endsWith('.pdf') ? 'bg-blue-100 text-blue-600' :
+                                'bg-purple-100 text-purple-600'
+                              }`}>
+                                <FileIcon type={uf.name.endsWith('.csv') ? 'csv' : uf.name.endsWith('.pdf') ? 'pdf' : 'image'} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-slate-700 truncate">{uf.name}</p>
+                                <p className="text-xs text-slate-400">
+                                  {uf.headers ? `${uf.headers.length} columns · ${uf.rowCount ?? 0} rows` : `${(uf.file.size / 1024).toFixed(1)} KB`}
+                                </p>
+                              </div>
+                              {uf.headers && (
+                                <div className="flex flex-wrap gap-1 max-w-[200px]">
+                                  {uf.headers.slice(0, 4).map((h, j) => (
+                                    <span key={j} className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded font-mono">{h}</span>
+                                  ))}
+                                  {uf.headers.length > 4 && <span className="text-[10px] text-slate-400">+{uf.headers.length - 4}</span>}
+                                </div>
+                              )}
+                              <button onClick={() => setUploadedFiles(prev => prev.filter((_, j) => j !== i))}
+                                className="p-1 text-slate-300 hover:text-red-400 transition-colors">
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Input Configuration */}
+                  <div className="flex items-center justify-between mb-5">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-800">Input Configuration</h3>
+                      <p className="text-xs text-slate-400 mt-0.5">{workflow?.inputs.length ?? 0} data source{(workflow?.inputs.length ?? 0) !== 1 ? 's' : ''} configured</p>
+                    </div>
+                    <button className="inline-flex items-center gap-1.5 bg-slate-900 text-white text-sm font-medium px-3.5 py-2 rounded-xl hover:bg-slate-800 transition-colors shadow-sm">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                      Add Input
+                    </button>
+                  </div>
+
+                  {!workflow || workflow.inputs.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-20 text-center">
+                      <div className="w-16 h-16 rounded-2xl bg-white border-2 border-dashed border-slate-200 flex items-center justify-center mb-4">
+                        <svg className="w-7 h-7 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                      </div>
+                      <p className="text-sm font-medium text-slate-500">No inputs yet</p>
+                      <p className="text-xs text-slate-400 mt-1">Describe your workflow in the chat to auto-generate inputs</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      {workflow.inputs.map((inp, idx) => (
+                        <div key={inp.id} className="bg-white rounded-2xl border border-slate-200 hover:border-slate-300 hover:shadow-md transition-all p-5">
+                          <div className="flex items-start justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${FILE_BG[inp.type]} ${FILE_TEXT[inp.type]}`}>
+                                <FileIcon type={inp.type} />
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-slate-400 font-medium">Input {idx + 1}</span>
+                                  {inp.required && <span className="text-[10px] bg-rose-50 text-rose-500 border border-rose-100 px-1.5 py-0.5 rounded font-semibold">Required</span>}
+                                </div>
+                              </div>
+                            </div>
+                            <button className="p-1 text-slate-300 hover:text-red-400 transition-colors rounded-lg">
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            </button>
+                          </div>
+                          <div className="space-y-3">
+                            <div>
+                              <label className="text-xs font-semibold text-slate-500 block mb-1.5">Field Name</label>
+                              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5">
+                                <svg className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>
+                                <span className="text-sm font-semibold text-slate-800">{inp.name}</span>
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-xs font-semibold text-slate-500 block mb-1.5">Type</label>
+                              <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5">
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 ${FILE_BG[inp.type]} ${FILE_TEXT[inp.type]}`}>
+                                    <FileIcon type={inp.type} />
+                                  </div>
+                                  <span className="text-sm text-slate-700 font-medium">
+                                    {inp.type === 'csv' ? 'CSV File' : inp.type === 'pdf' ? 'PDF Document' : inp.type === 'image' ? 'Image File' : 'SQL Database'}
+                                  </span>
+                                </div>
+                                <svg className="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-xs font-semibold text-slate-500 block mb-1.5">Description</label>
+                              <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-600 leading-relaxed">{inp.description}</div>
+                            </div>
+                            <div className="flex items-center justify-between pt-1">
+                              <label className="text-xs font-semibold text-slate-500">Required</label>
+                              <div className={`relative w-11 h-6 rounded-full flex-shrink-0 transition-colors ${inp.required ? 'bg-indigo-600' : 'bg-slate-200'}`}>
+                                <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${inp.required ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
