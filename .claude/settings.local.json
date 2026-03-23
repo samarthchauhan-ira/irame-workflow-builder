@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /Users/samarthchauhan/irame-workflow-builder -maxdepth 2 ! -path */node_modules/* ! -path */.next/* ! -path */.* -type d)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(wc -l /Users/samarthchauhan/irame-workflow-builder/app/workflow/[id]/page.tsx)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git rm:*)",
+      "Bash(gh repo:*)",
+      "Bash(brew list:*)",
+      "Bash(brew install:*)",
+      "Bash(gh auth:*)",
+      "Bash(git filter-branch:*)",
+      "Bash(git stash:*)",
+      "Bash(FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch --force --index-filter 'git rm -r --cached --ignore-unmatch node_modules .next .env.local' --prune-empty HEAD)"
+    ]
+  }
+}
