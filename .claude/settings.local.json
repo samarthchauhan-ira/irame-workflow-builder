@@ -14,7 +14,11 @@
       "Bash(gh auth:*)",
       "Bash(git filter-branch:*)",
       "Bash(git stash:*)",
-      "Bash(FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch --force --index-filter 'git rm -r --cached --ignore-unmatch node_modules .next .env.local' --prune-empty HEAD)"
+      "Bash(FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch --force --index-filter 'git rm -r --cached --ignore-unmatch node_modules .next .env.local' --prune-empty HEAD)",
+      "Bash(git remote:*)",
+      "Bash(git push:*)",
+      "WebFetch(domain:shadcncraft.com)",
+      "Bash(npx shadcn@latest init -d)"
     ]
   }
 }
