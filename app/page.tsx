@@ -4,20 +4,12 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Workflow } from '@/lib/types';
-import { getWorkflows, deleteWorkflow } from '@/lib/storage';
+import { getWorkflows } from '@/lib/storage';
+import { RecentWorkflows } from '@/components/RecentWorkflows';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from '@/components/ui/dropdown-menu';
-import {
-  Pencil,
   Upload,
   Link2,
   Columns,
@@ -25,19 +17,15 @@ import {
   Sparkles,
   Plus,
   Paperclip,
-  Tag,
-  Calendar,
-  Settings,
   MoreHorizontal,
-  Trash2,
   ChevronDown,
+  ChevronRight,
   Home,
   LayoutDashboard,
   BarChart3,
   Bot,
   Cog,
   FileText,
-  ChevronRight,
 } from 'lucide-react';
 
 /* ─── Stepper config ──────────────────────────────────────────────── */
@@ -74,26 +62,15 @@ const PROJECTS = [
   { label: 'Manufacturing Indu...', children: [] },
 ];
 
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toISOString().split('T')[0];
-}
-
 export default function WorkflowBuilderPage() {
   const router = useRouter();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [prompt, setPrompt] = useState('');
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [expandedProject, setExpandedProject] = useState<string | null>('Hire to Retire Stand...');
 
   useEffect(() => {
     setWorkflows(getWorkflows());
   }, []);
-
-  function handleDelete(id: string) {
-    deleteWorkflow(id);
-    setWorkflows(getWorkflows());
-    setDeleteConfirm(null);
-  }
 
   function handleSubmitPrompt() {
     if (!prompt.trim()) return;
@@ -285,84 +262,9 @@ export default function WorkflowBuilderPage() {
 
           <div className="mx-[15%] mb-8 h-px bg-gray-100" />
 
-          {/* ── Use Templates ── */}
+          {/* ── Recent Workflows ── */}
           <div className="mx-[15%]">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-lg font-semibold text-gray-900">Templates</h2>
-              <span className="text-xs text-gray-400">{workflows.length} workflows</span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {workflows.map((workflow) => (
-                <Card key={workflow.id} className="rounded-2xl border-gray-200 hover:border-gray-300 transition-all duration-200 relative py-0 shadow-none bg-white group">
-                  {/* Delete confirm overlay */}
-                  {deleteConfirm === workflow.id && (
-                    <div className="absolute inset-0 bg-white/97 rounded-2xl z-10 flex flex-col items-center justify-center gap-3 p-6">
-                      <p className="text-sm font-medium text-gray-800 text-center">Delete &ldquo;{workflow.name}&rdquo;?</p>
-                      <div className="flex gap-2">
-                        <Button variant="destructive" onClick={() => handleDelete(workflow.id)} className="px-4 rounded-xl">Delete</Button>
-                        <Button variant="secondary" onClick={() => setDeleteConfirm(null)} className="px-4 rounded-xl">Cancel</Button>
-                      </div>
-                    </div>
-                  )}
-
-                  <CardHeader className="p-5 pb-0">
-                    <div className="flex items-start justify-between">
-                      <CardTitle className="font-medium text-gray-900 text-sm leading-snug truncate flex-1 pr-2">{workflow.name}</CardTitle>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-gray-400 hover:text-gray-600 rounded-lg flex-shrink-0 opacity-0 group-hover:opacity-100 transition-all duration-200">
-                            <MoreHorizontal className="w-3.5 h-3.5" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-40 rounded-xl">
-                          <DropdownMenuItem className="gap-2 px-3 py-2 text-sm" onSelect={() => { window.location.href = `/builder?edit=${workflow.id}`; }}>
-                            <Pencil className="w-3.5 h-3.5" /> Edit
-                          </DropdownMenuItem>
-                          <DropdownMenuItem className="gap-2 px-3 py-2 text-sm text-red-600 focus:text-red-600" onSelect={() => setDeleteConfirm(workflow.id)}>
-                            <Trash2 className="w-3.5 h-3.5" /> Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </CardHeader>
-
-                  <CardContent className="px-5 pt-3 pb-0">
-                    <Badge variant="secondary" className={cn(
-                      'rounded-full text-[10px] font-medium px-2 py-0.5 mb-3 border-0',
-                      workflow.status === 'active'
-                        ? 'bg-emerald-50 text-emerald-700'
-                        : 'bg-amber-50 text-amber-700'
-                    )}>
-                      {workflow.status}
-                    </Badge>
-                    <p className="text-xs text-gray-500 line-clamp-2 mb-4 leading-relaxed font-normal">{workflow.description}</p>
-                    <div className="space-y-1.5 mb-5">
-                      <div className="flex items-center gap-2 text-[11px] text-gray-400">
-                        <Tag className="w-3 h-3" />
-                        <span>{workflow.inputs.length} input{workflow.inputs.length !== 1 ? 's' : ''} &bull; 1 output</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-[11px] text-gray-400">
-                        <Calendar className="w-3 h-3" />
-                        <span>Updated {formatDate(workflow.updatedAt)}</span>
-                      </div>
-                    </div>
-                  </CardContent>
-
-                  <CardFooter className="px-5 py-4 border-t border-gray-100 bg-transparent gap-2">
-                    <Button asChild variant="outline" className="flex-1 rounded-xl border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300 text-xs h-8 transition-all duration-200">
-                      <Link href={`/builder?edit=${workflow.id}`} className="inline-flex items-center justify-center gap-1.5">
-                        <Settings className="w-3.5 h-3.5" /> Configure
-                      </Link>
-                    </Button>
-                    <Button asChild className="w-8 h-8 bg-gray-900 hover:bg-gray-700 text-white rounded-xl flex-shrink-0 p-0 transition-all duration-200" title="Run workflow">
-                      <Link href={`/workflow-run?id=${workflow.id}`} className="inline-flex items-center justify-center">
-                        <Play className="w-3.5 h-3.5" />
-                      </Link>
-                    </Button>
-                  </CardFooter>
-                </Card>
-              ))}
-            </div>
+            <RecentWorkflows workflows={workflows} />
           </div>
 
         </div>
