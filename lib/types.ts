@@ -9,6 +9,7 @@ export interface WorkflowInput {
   description: string;
   required: boolean;
   multiple?: boolean;
+  columns?: string[];
 }
 
 export interface OutputField {
@@ -72,7 +73,7 @@ export interface WorkflowResult {
     [key: string]: string | number | undefined;
   };
   flags?: Array<{
-    id: number;
+    id: number | string;
     description: string;
     severity: 'low' | 'medium' | 'high' | 'critical';
     reference?: string;

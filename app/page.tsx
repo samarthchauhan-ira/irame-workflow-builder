@@ -1,295 +1,372 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Workflow } from '@/lib/types';
 import { getWorkflows, deleteWorkflow } from '@/lib/storage';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
+import {
+  Pencil,
+  Upload,
+  Link2,
+  Columns,
+  Play,
+  Sparkles,
+  Plus,
+  Paperclip,
+  Tag,
+  Calendar,
+  Settings,
+  MoreHorizontal,
+  Trash2,
+  ChevronDown,
+  Home,
+  LayoutDashboard,
+  BarChart3,
+  Bot,
+  Cog,
+  FileText,
+  ChevronRight,
+} from 'lucide-react';
 
-const WORKFLOW_TEMPLATES = [
-  { name: 'Vendor Contract Audit', description: 'Flag non-compliant clauses and unapproved vendors', category: 'Contract Audit', icon: '📋' },
-  { name: 'Payroll Audit', description: 'Detect ghost employees and payroll anomalies', category: 'HR Audit', icon: '💰' },
-  { name: 'Expense Report Review', description: 'Flag policy violations and duplicate claims', category: 'Expense Audit', icon: '🧾' },
-  { name: 'GST Reconciliation', description: 'Match GST returns against ledger entries', category: 'Tax Audit', icon: '📊' },
+/* ─── Stepper config ──────────────────────────────────────────────── */
+const FLOW_STEPS = [
+  { key: 'prompt',  label: 'WRITE PROMPT',  icon: Sparkles },
+  { key: 'upload',  label: 'UPLOAD FILES',  icon: Upload },
+  { key: 'map',     label: 'MAP FILES',     icon: Link2 },
+  { key: 'columns', label: 'MAP COLUMNS',   icon: Columns },
+  { key: 'run',     label: 'REVIEW & RUN',  icon: Play },
+] as const;
+
+/* ─── Sidebar nav items ───────────────────────────────────────────── */
+const NAV_ITEMS = [
+  { label: 'Home',             icon: Home,            href: '/' },
+  { label: 'Business Process', icon: FileText,        href: '#' },
+  { label: 'Dashboard',        icon: LayoutDashboard, href: '#' },
+  { label: 'Reports',          icon: BarChart3,       href: '#' },
+  { label: 'AI Concierge',     icon: Bot,             href: '/', active: true, badge: 'Beta' },
+  { label: 'Configuration',    icon: Cog,             href: '#' },
+];
+
+const PROJECTS = [
+  { label: 'KBL O2C Inventory ...', children: [] },
+  { label: 'HR KPI',                children: [] },
+  { label: 'SCV - Freight',         children: [] },
+  { label: 'Production MIS',        children: [] },
+  { label: 'Energy and Infra Ch...', children: [] },
+  { label: 'Hire to Retire Stand...', children: [
+    'JVs in salary G...',
+    'Employee cust...',
+    'Salary GL tren...',
+  ]},
+  { label: 'AirLines X- Ray Cha...', children: [] },
+  { label: 'Manufacturing Indu...', children: [] },
 ];
 
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toISOString().split('T')[0];
 }
 
-export default function DashboardPage() {
+export default function WorkflowBuilderPage() {
+  const router = useRouter();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
-  const [search, setSearch] = useState('');
-  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const [expandedProject, setExpandedProject] = useState<string | null>('Hire to Retire Stand...');
 
   useEffect(() => {
     setWorkflows(getWorkflows());
   }, []);
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setOpenMenu(null);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
-
-  const filtered = workflows.filter(
-    (w) =>
-      search === '' ||
-      w.name.toLowerCase().includes(search.toLowerCase()) ||
-      w.description.toLowerCase().includes(search.toLowerCase()),
-  );
-
-  const activeCount = workflows.filter((w) => w.status === 'active').length;
-  const draftCount = workflows.filter((w) => w.status === 'draft').length;
-  const totalRuns = workflows.reduce((a, w) => a + w.runCount, 0);
 
   function handleDelete(id: string) {
     deleteWorkflow(id);
     setWorkflows(getWorkflows());
     setDeleteConfirm(null);
-    setOpenMenu(null);
+  }
+
+  function handleSubmitPrompt() {
+    if (!prompt.trim()) return;
+    router.push(`/builder?prompt=${encodeURIComponent(prompt.trim())}`);
+  }
+
+  function handleFeelingLucky() {
+    router.push('/builder?template=Terminal%20Charges%20Audit');
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Header */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-sm">
-              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-              </svg>
-            </div>
-            <div>
-              <div className="font-bold text-slate-900 text-base leading-tight">Irame.ai Workflow Builder</div>
-              <div className="text-xs text-slate-400 leading-tight">Build custom audit workflows</div>
-            </div>
-          </div>
-          <button className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors">
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-          </button>
-        </div>
-      </header>
+    <div className="flex h-screen bg-background overflow-hidden">
 
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        {/* Search + Create */}
-        <div className="flex items-center gap-3 mb-6">
-          <div className="relative flex-1">
-            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input
-              type="text"
-              placeholder="Search workflows..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2.5 text-sm border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent placeholder:text-slate-400"
-            />
+      {/* ═══ Left Sidebar — dark ═══ */}
+      <aside className="sidebar-dark w-[220px] flex-shrink-0 flex flex-col bg-[#0b0b12] border-r border-white/[0.06]">
+        {/* Logo */}
+        <div className="px-4 py-4 flex items-center gap-2.5 border-b border-white/[0.06]">
+          <div className="w-8 h-8 rounded-lg bg-violet-500/20 flex items-center justify-center flex-shrink-0 ring-1 ring-violet-500/30">
+            <FileText className="w-4 h-4 text-violet-400" />
           </div>
-          <Link
-            href="/builder"
-            className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium px-4 py-2.5 rounded-xl transition-colors flex-shrink-0"
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold text-white truncate">Irame 4</div>
+            <div className="text-[11px] text-gray-500 truncate">Irame.ai</div>
+          </div>
+          <ChevronDown className="w-4 h-4 text-gray-600 flex-shrink-0" />
+        </div>
+
+        {/* Ask IRA — AI-powered CTA */}
+        <div className="px-3 pt-3 pb-1">
+          <Button
+            variant="outline"
+            className="w-full justify-start gap-2 rounded-lg border-white/10 bg-white/5 text-gray-200 hover:bg-white/10 hover:text-white hover:border-violet-500/40 h-9 transition-all duration-200"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Create Workflow
-          </Link>
+            <Sparkles className="w-3.5 h-3.5 text-violet-400" />
+            <span className="text-sm font-medium">Ask IRA</span>
+          </Button>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
-          {[
-            { label: 'Total Workflows', value: workflows.length },
-            { label: 'Active', value: activeCount },
-            { label: 'Drafts', value: draftCount },
-            { label: 'Executions Today', value: totalRuns },
-          ].map((stat) => (
-            <div key={stat.label} className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-              <div className="text-3xl font-bold text-slate-900">{stat.value}</div>
-              <div className="text-sm text-slate-500 mt-1">{stat.label}</div>
+        {/* Nav */}
+        <nav className="px-2 py-2 space-y-0.5">
+          {NAV_ITEMS.map((item) => (
+            <Link
+              key={item.label}
+              href={item.href}
+              className={cn(
+                'flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-all duration-150',
+                item.active
+                  ? 'bg-violet-500/15 text-violet-300 font-medium border-l-[2px] border-violet-400 pl-[9px]'
+                  : 'text-gray-500 hover:bg-white/5 hover:text-gray-200'
+              )}
+            >
+              <item.icon className={cn('w-4 h-4 flex-shrink-0', item.active ? 'text-violet-400' : 'text-gray-600')} />
+              <span className="flex-1 truncate">{item.label}</span>
+              {item.badge && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 border-violet-500/30 text-violet-400 font-medium bg-violet-500/10">
+                  {item.badge}
+                </Badge>
+              )}
+            </Link>
+          ))}
+        </nav>
+
+        <div className="mx-3 my-2 h-px bg-white/[0.06]" />
+
+        {/* Projects list */}
+        <div className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5">
+          {PROJECTS.map((proj) => (
+            <div key={proj.label}>
+              <button
+                onClick={() => proj.children.length > 0 && setExpandedProject(expandedProject === proj.label ? null : proj.label)}
+                className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-white/5 hover:text-gray-300 transition-all duration-150"
+              >
+                <FileText className="w-3.5 h-3.5 text-gray-700 flex-shrink-0" />
+                <span className="flex-1 truncate text-left">{proj.label}</span>
+                {proj.children.length > 0 ? (
+                  <ChevronRight className={cn('w-3 h-3 text-gray-600 transition-transform duration-150', expandedProject === proj.label && 'rotate-90')} />
+                ) : (
+                  <ChevronRight className="w-3 h-3 text-gray-700/50" />
+                )}
+              </button>
+              {proj.children.length > 0 && expandedProject === proj.label && (
+                <div className="ml-4 space-y-0.5">
+                  {proj.children.map((child) => (
+                    <div key={child} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-white/5 hover:text-gray-300 cursor-pointer transition-all duration-150">
+                      <div className="w-1 h-1 rounded-full bg-gray-700 flex-shrink-0" />
+                      <span className="truncate">{child}</span>
+                      <MoreHorizontal className="w-3 h-3 text-gray-700 ml-auto flex-shrink-0" />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
+      </aside>
 
-        {/* Workflows */}
-        <div className="mb-8">
-          <h2 className="text-base font-semibold text-slate-900 mb-4">Your Workflows</h2>
+      {/* ═══ Main Content ═══ */}
+      <main className="flex-1 overflow-y-auto bg-gradient-to-br from-slate-50 via-white to-violet-50/20">
+        <div className="max-w-5xl mx-auto px-8 py-8">
 
-          {filtered.length === 0 ? (
-            <div className="text-center py-20 bg-white rounded-2xl border border-slate-200">
-              <div className="text-5xl mb-4">🔍</div>
-              <p className="text-slate-500 mb-4">No workflows found</p>
-              <Link href="/builder" className="inline-flex items-center gap-2 bg-slate-900 text-white text-sm font-medium px-4 py-2 rounded-xl hover:bg-slate-800 transition-colors">
-                Create your first workflow
-              </Link>
+          {/* ── Page title ── */}
+          <h1 className="text-[1.75rem] font-semibold text-gray-900 mb-8 tracking-tight">Workflow builder</h1>
+
+          {/* ── 5-Step Stepper ── */}
+          <div className="flex items-center justify-center mb-10">
+            <div className="flex items-center gap-0">
+              {FLOW_STEPS.map((step, idx) => {
+                const stepNum = idx + 1;
+                const isActive = idx === 0;
+                const StepIcon = step.icon;
+                return (
+                  <div key={step.key} className="flex items-center">
+                    {idx > 0 && (
+                      <div className="w-14 h-px bg-gray-200" />
+                    )}
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="relative">
+                        <div className={cn(
+                          'w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200',
+                          isActive
+                            ? 'bg-violet-50 ring-2 ring-violet-400/50 ring-offset-2'
+                            : 'bg-white border border-gray-200'
+                        )}>
+                          <StepIcon className={cn('w-4 h-4', isActive ? 'text-violet-600' : 'text-gray-400')} />
+                        </div>
+                        <div className={cn(
+                          'absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center',
+                          isActive ? 'bg-violet-600' : 'bg-gray-300'
+                        )}>
+                          <span className="text-[9px] font-bold text-white">{stepNum}</span>
+                        </div>
+                      </div>
+                      <span className={cn(
+                        'text-[10px] font-semibold tracking-widest',
+                        isActive ? 'text-violet-600' : 'text-gray-400'
+                      )}>
+                        {step.label}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" ref={menuRef}>
-              {filtered.map((workflow) => (
-                <div key={workflow.id} className="bg-white rounded-2xl border border-slate-200 hover:border-slate-300 hover:shadow-md transition-all relative">
+          </div>
+
+          {/* ── Hero Section ── */}
+          <div className="text-center mb-8">
+            <h2 className="text-[2.75rem] font-bold text-gray-900 mb-3 tracking-tight leading-tight">
+              Audit smarter.{' '}
+              <span className="bg-gradient-to-r from-violet-600 to-blue-500 bg-clip-text text-transparent">
+                Not harder.
+              </span>
+            </h2>
+            <p className="text-base text-gray-400 font-normal">
+              Your AI copilot already knows what to look for. Just ask.
+            </p>
+          </div>
+
+          {/* ── Prompt Input ── */}
+          <div className="mx-[15%] mb-12">
+            <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden ai-glow transition-all duration-200">
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitPrompt(); } }}
+                placeholder="Describe a workflow and let Auditify do the rest…"
+                rows={3}
+                className="w-full px-5 pt-5 pb-2 text-sm text-gray-700 placeholder:text-gray-400 resize-none focus:outline-none bg-transparent font-normal leading-relaxed"
+              />
+              <div className="flex items-center justify-between px-4 pb-4">
+                <div className="flex items-center gap-1.5">
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-gray-600 rounded-lg transition-all duration-200">
+                    <Paperclip className="w-4 h-4" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-gray-600 rounded-lg transition-all duration-200">
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </div>
+                <Button
+                  onClick={handleFeelingLucky}
+                  className="bg-violet-600 hover:bg-violet-700 text-white rounded-full px-5 h-9 gap-2 text-sm font-medium transition-all duration-200 shadow-none"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Audit on Chat
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div className="mx-[15%] mb-8 h-px bg-gray-100" />
+
+          {/* ── Use Templates ── */}
+          <div className="mx-[15%]">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-lg font-semibold text-gray-900">Templates</h2>
+              <span className="text-xs text-gray-400">{workflows.length} workflows</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {workflows.map((workflow) => (
+                <Card key={workflow.id} className="rounded-2xl border-gray-200 hover:border-gray-300 transition-all duration-200 relative py-0 shadow-none bg-white group">
                   {/* Delete confirm overlay */}
                   {deleteConfirm === workflow.id && (
-                    <div className="absolute inset-0 bg-white/97 rounded-2xl z-10 flex flex-col items-center justify-center gap-3 p-6 backdrop-blur-sm">
-                      <p className="text-sm font-medium text-slate-800 text-center">Delete &ldquo;{workflow.name}&rdquo;?</p>
+                    <div className="absolute inset-0 bg-white/97 rounded-2xl z-10 flex flex-col items-center justify-center gap-3 p-6">
+                      <p className="text-sm font-medium text-gray-800 text-center">Delete &ldquo;{workflow.name}&rdquo;?</p>
                       <div className="flex gap-2">
-                        <button onClick={() => handleDelete(workflow.id)} className="px-4 py-2 bg-red-600 text-white text-sm rounded-xl hover:bg-red-700 transition-colors">Delete</button>
-                        <button onClick={() => setDeleteConfirm(null)} className="px-4 py-2 bg-slate-100 text-slate-700 text-sm rounded-xl hover:bg-slate-200 transition-colors">Cancel</button>
+                        <Button variant="destructive" onClick={() => handleDelete(workflow.id)} className="px-4 rounded-xl">Delete</Button>
+                        <Button variant="secondary" onClick={() => setDeleteConfirm(null)} className="px-4 rounded-xl">Cancel</Button>
                       </div>
                     </div>
                   )}
 
-                  <div className="p-5">
-                    {/* Card top */}
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex-1 min-w-0 pr-2">
-                        <h3 className="font-semibold text-slate-900 text-base leading-snug truncate">{workflow.name}</h3>
-                      </div>
-                      {/* Three-dot menu */}
-                      <div className="relative flex-shrink-0">
-                        <button
-                          onClick={() => setOpenMenu(openMenu === workflow.id ? null : workflow.id)}
-                          className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-                        >
-                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                            <circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" />
-                          </svg>
-                        </button>
-                        {openMenu === workflow.id && (
-                          <div className="absolute right-0 top-7 bg-white border border-slate-200 rounded-xl shadow-lg z-20 py-1 w-40">
-                            <Link
-                              href={`/builder?edit=${workflow.id}`}
-                              className="flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                              onClick={() => setOpenMenu(null)}
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                              </svg>
-                              Edit
-                            </Link>
-                            <button
-                              onClick={() => { setDeleteConfirm(workflow.id); setOpenMenu(null); }}
-                              className="flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 w-full text-left"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                              </svg>
-                              Delete
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                  <CardHeader className="p-5 pb-0">
+                    <div className="flex items-start justify-between">
+                      <CardTitle className="font-medium text-gray-900 text-sm leading-snug truncate flex-1 pr-2">{workflow.name}</CardTitle>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-gray-400 hover:text-gray-600 rounded-lg flex-shrink-0 opacity-0 group-hover:opacity-100 transition-all duration-200">
+                            <MoreHorizontal className="w-3.5 h-3.5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40 rounded-xl">
+                          <DropdownMenuItem className="gap-2 px-3 py-2 text-sm" onSelect={() => { window.location.href = `/builder?edit=${workflow.id}`; }}>
+                            <Pencil className="w-3.5 h-3.5" /> Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem className="gap-2 px-3 py-2 text-sm text-red-600 focus:text-red-600" onSelect={() => setDeleteConfirm(workflow.id)}>
+                            <Trash2 className="w-3.5 h-3.5" /> Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
+                  </CardHeader>
 
-                    {/* Status badge */}
-                    <div className="mb-3">
-                      <span className={`inline-flex items-center text-xs font-medium px-2.5 py-0.5 rounded-full ${
-                        workflow.status === 'active'
-                          ? 'bg-green-100 text-green-700'
-                          : 'bg-amber-100 text-amber-700'
-                      }`}>
-                        {workflow.status}
-                      </span>
-                    </div>
-
-                    {/* Description */}
-                    <p className="text-sm text-slate-500 line-clamp-2 mb-4 leading-relaxed">{workflow.description}</p>
-
-                    {/* Meta */}
+                  <CardContent className="px-5 pt-3 pb-0">
+                    <Badge variant="secondary" className={cn(
+                      'rounded-full text-[10px] font-medium px-2 py-0.5 mb-3 border-0',
+                      workflow.status === 'active'
+                        ? 'bg-emerald-50 text-emerald-700'
+                        : 'bg-amber-50 text-amber-700'
+                    )}>
+                      {workflow.status}
+                    </Badge>
+                    <p className="text-xs text-gray-500 line-clamp-2 mb-4 leading-relaxed font-normal">{workflow.description}</p>
                     <div className="space-y-1.5 mb-5">
-                      <div className="flex items-center gap-2 text-xs text-slate-400">
-                        <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-                        </svg>
+                      <div className="flex items-center gap-2 text-[11px] text-gray-400">
+                        <Tag className="w-3 h-3" />
                         <span>{workflow.inputs.length} input{workflow.inputs.length !== 1 ? 's' : ''} &bull; 1 output</span>
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-slate-400">
-                        <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                        </svg>
+                      <div className="flex items-center gap-2 text-[11px] text-gray-400">
+                        <Calendar className="w-3 h-3" />
                         <span>Updated {formatDate(workflow.updatedAt)}</span>
                       </div>
                     </div>
+                  </CardContent>
 
-                    {/* Actions */}
-                    <div className="flex items-center gap-2 pt-4 border-t border-slate-100">
-                      <Link
-                        href={`/builder?edit=${workflow.id}`}
-                        className="flex-1 inline-flex items-center justify-center gap-2 text-sm font-medium text-slate-700 border border-slate-200 rounded-xl py-2 hover:bg-slate-50 hover:border-slate-300 transition-colors"
-                      >
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                        Configure
+                  <CardFooter className="px-5 py-4 border-t border-gray-100 bg-transparent gap-2">
+                    <Button asChild variant="outline" className="flex-1 rounded-xl border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300 text-xs h-8 transition-all duration-200">
+                      <Link href={`/builder?edit=${workflow.id}`} className="inline-flex items-center justify-center gap-1.5">
+                        <Settings className="w-3.5 h-3.5" /> Configure
                       </Link>
-                      <Link
-                        href={`/workflow/${workflow.id}`}
-                        className="w-10 h-10 inline-flex items-center justify-center bg-slate-900 hover:bg-slate-800 text-white rounded-xl transition-colors flex-shrink-0"
-                        title="Run workflow"
-                      >
-                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M8 5v14l11-7z" />
-                        </svg>
+                    </Button>
+                    <Button asChild className="w-8 h-8 bg-gray-900 hover:bg-gray-700 text-white rounded-xl flex-shrink-0 p-0 transition-all duration-200" title="Run workflow">
+                      <Link href={`/workflow-run?id=${workflow.id}`} className="inline-flex items-center justify-center">
+                        <Play className="w-3.5 h-3.5" />
                       </Link>
-                    </div>
-                  </div>
-                </div>
+                    </Button>
+                  </CardFooter>
+                </Card>
               ))}
-
-              {/* Create new card */}
-              <Link
-                href="/builder"
-                className="bg-white rounded-2xl border-2 border-dashed border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all flex flex-col items-center justify-center py-14 gap-3 group min-h-[240px]"
-              >
-                <div className="w-12 h-12 rounded-2xl bg-slate-100 group-hover:bg-indigo-100 flex items-center justify-center transition-colors">
-                  <svg className="w-6 h-6 text-slate-400 group-hover:text-indigo-600 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                </div>
-                <div className="text-center">
-                  <p className="text-sm font-medium text-slate-600 group-hover:text-indigo-700 transition-colors">New Workflow</p>
-                  <p className="text-xs text-slate-400 mt-0.5">Describe it in plain English</p>
-                </div>
-              </Link>
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Workflow Templates */}
-        <div>
-          <div className="flex items-center gap-2 mb-4">
-            <svg className="w-4 h-4 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-            <h2 className="text-base font-semibold text-slate-900">Workflow Templates</h2>
-          </div>
-          <p className="text-sm text-slate-500 mb-4">Start with pre-built workflows designed for common audit scenarios</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {WORKFLOW_TEMPLATES.map((tpl) => (
-              <Link
-                key={tpl.name}
-                href={`/builder?template=${encodeURIComponent(tpl.name)}`}
-                className="bg-white rounded-2xl border border-slate-200 p-4 hover:border-indigo-300 hover:shadow-sm transition-all group"
-              >
-                <div className="text-2xl mb-3">{tpl.icon}</div>
-                <div className="text-sm font-semibold text-slate-800 mb-1 group-hover:text-indigo-700 transition-colors">{tpl.name}</div>
-                <div className="text-xs text-slate-400 leading-relaxed">{tpl.description}</div>
-                <div className="mt-3 text-xs font-medium text-slate-400 bg-slate-50 rounded-lg px-2 py-1 inline-block">{tpl.category}</div>
-              </Link>
-            ))}
-          </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }

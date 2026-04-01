@@ -1,47 +1,67 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect, useMemo, Fragment } from 'react';
+import { useState, useRef, useEffect, useMemo, Fragment } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Workflow, ChatMessage, StepType } from '@/lib/types';
 import { saveWorkflow } from '@/lib/storage';
+import { generateWorkflow, clarifyWorkflow } from '@/lib/mock-api';
+import { cn } from '@/lib/utils';
 
-/* ─── Step type config ────────────────────────────────────────────────── */
-const STC: Record<StepType, { label: string; bg: string; text: string; dot: string; bar: string; ring: string }> = {
-  extract:   { label: 'Extract',   bg: 'bg-blue-100',    text: 'text-blue-700',    dot: 'bg-blue-500',    bar: 'bg-blue-500',    ring: 'ring-blue-200' },
-  analyze:   { label: 'Analyze',   bg: 'bg-purple-100',  text: 'text-purple-700',  dot: 'bg-purple-500',  bar: 'bg-purple-500',  ring: 'ring-purple-200' },
-  compare:   { label: 'Compare',   bg: 'bg-indigo-100',  text: 'text-indigo-700',  dot: 'bg-indigo-500',  bar: 'bg-indigo-500',  ring: 'ring-indigo-200' },
-  flag:      { label: 'Flag',      bg: 'bg-rose-100',    text: 'text-rose-700',    dot: 'bg-rose-500',    bar: 'bg-rose-500',    ring: 'ring-rose-200' },
-  summarize: { label: 'Summarize', bg: 'bg-emerald-100', text: 'text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500', ring: 'ring-emerald-200' },
-  calculate: { label: 'Calculate', bg: 'bg-amber-100',   text: 'text-amber-700',   dot: 'bg-amber-500',   bar: 'bg-amber-500',   ring: 'ring-amber-200' },
-  validate:  { label: 'Validate',  bg: 'bg-cyan-100',    text: 'text-cyan-700',    dot: 'bg-cyan-500',    bar: 'bg-cyan-500',    ring: 'ring-cyan-200' },
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
+import { Separator } from '@/components/ui/separator';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
+import { ScrollArea } from '@/components/ui/scroll-area';
+
+import {
+  ArrowLeft, Send, Plus, Save, Play, X, Check, Upload, AlertTriangle,
+  Link2, Columns, Zap, FileText, Image, Database, Table2, Filter, Shield,
+  ArrowLeftRight, Calculator, Flag, ClipboardList, Loader2, Pencil,
+  Download, Maximize2, Minus, Code2, BarChart3, Sparkles, ChevronDown, ChevronRight,
+  Search, LayoutDashboard, SplitSquareHorizontal, Info, ArrowRight,
+  RefreshCw, PieChart, TrendingUp, DollarSign, CheckCircle2,
+} from 'lucide-react';
+
+/* ---- Step type config ------------------------------------------------- */
+const STC: Record<StepType, { label: string; bg: string; text: string; dot: string; bar: string; ring: string; circle: string }> = {
+  extract:   { label: 'Extract',   bg: 'bg-blue-100',    text: 'text-blue-700',    dot: 'bg-blue-500',    bar: 'bg-blue-500',    ring: 'ring-blue-200',    circle: 'bg-blue-500' },
+  analyze:   { label: 'Analyze',   bg: 'bg-purple-100',  text: 'text-purple-700',  dot: 'bg-purple-500',  bar: 'bg-purple-500',  ring: 'ring-purple-200',  circle: 'bg-purple-500' },
+  compare:   { label: 'Compare',   bg: 'bg-violet-100',  text: 'text-violet-700',  dot: 'bg-violet-500',  bar: 'bg-violet-500',  ring: 'ring-violet-200',  circle: 'bg-violet-500' },
+  flag:      { label: 'Flag',      bg: 'bg-rose-100',    text: 'text-rose-700',    dot: 'bg-rose-500',    bar: 'bg-rose-500',    ring: 'ring-rose-200',    circle: 'bg-rose-500' },
+  summarize: { label: 'Summarize', bg: 'bg-emerald-100', text: 'text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500', ring: 'ring-emerald-200', circle: 'bg-emerald-500' },
+  calculate: { label: 'Calculate', bg: 'bg-amber-100',   text: 'text-amber-700',   dot: 'bg-amber-500',   bar: 'bg-amber-500',   ring: 'ring-amber-200',   circle: 'bg-amber-500' },
+  validate:  { label: 'Validate',  bg: 'bg-cyan-100',    text: 'text-cyan-700',    dot: 'bg-cyan-500',    bar: 'bg-cyan-500',    ring: 'ring-cyan-200',    circle: 'bg-cyan-500' },
 };
 
-/* ─── Step type icons ─────────────────────────────────────────────────── */
-function StepIcon({ type, active }: { type: StepType; active: boolean }) {
-  const c = `w-7 h-7 transition-colors ${active ? 'text-white' : 'text-slate-400 group-hover:text-slate-600'}`;
-  if (type === 'extract')   return <svg className={c} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>;
-  if (type === 'validate')  return <svg className={c} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>;
-  if (type === 'compare')   return <svg className={c} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>;
-  if (type === 'calculate') return <svg className={c} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>;
-  if (type === 'flag')      return <svg className={c} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9" /></svg>;
-  if (type === 'summarize') return <svg className={c} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>;
-  return <svg className={c} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>;
-}
+/* ---- Step type badge labels ------------------------------------------- */
+const STEP_BADGE: Record<StepType, { label: string; bg: string; text: string }> = {
+  extract:   { label: 'INGESTION',   bg: 'bg-blue-100',    text: 'text-blue-700' },
+  analyze:   { label: 'PROCESSING',  bg: 'bg-purple-100',  text: 'text-purple-700' },
+  compare:   { label: 'PROCESSING',  bg: 'bg-violet-100',  text: 'text-violet-700' },
+  flag:      { label: 'PROCESSING',  bg: 'bg-rose-100',    text: 'text-rose-700' },
+  summarize: { label: 'OUTPUT',      bg: 'bg-emerald-100', text: 'text-emerald-700' },
+  calculate: { label: 'PROCESSING',  bg: 'bg-amber-100',   text: 'text-amber-700' },
+  validate:  { label: 'PROCESSING',  bg: 'bg-cyan-100',    text: 'text-cyan-700' },
+};
 
-/* ─── File type helpers ───────────────────────────────────────────────── */
-const FILE_BG:   Record<string, string> = { csv: 'bg-emerald-100', pdf: 'bg-blue-100',   image: 'bg-purple-100', sql: 'bg-orange-100' };
-const FILE_TEXT: Record<string, string> = { csv: 'text-emerald-600',pdf: 'text-blue-600', image: 'text-purple-600',sql: 'text-orange-600' };
+/* ---- File type helpers ------------------------------------------------ */
+const FILE_BG: Record<string, string> = { csv: 'bg-emerald-100', pdf: 'bg-blue-100', image: 'bg-purple-100', sql: 'bg-orange-100' };
+const FILE_TEXT: Record<string, string> = { csv: 'text-emerald-600', pdf: 'text-blue-600', image: 'text-purple-600', sql: 'text-orange-600' };
 
 function FileIcon({ type }: { type: string }) {
   const c = 'w-4 h-4';
-  if (type === 'pdf')   return <svg className={c} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>;
-  if (type === 'image') return <svg className={c} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>;
-  if (type === 'sql')   return <svg className={c} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582 4 8-4s8 1.79 8 4" /></svg>;
-  return <svg className={c} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>;
+  if (type === 'pdf') return <FileText className={c} />;
+  if (type === 'image') return <Image className={c} />;
+  if (type === 'sql') return <Database className={c} />;
+  return <Table2 className={c} />;
 }
 
-/* ─── Demo workflow ───────────────────────────────────────────────────── */
+/* ---- Demo workflow ---------------------------------------------------- */
 type PartialWorkflow = Omit<Workflow, 'id' | 'createdAt' | 'updatedAt' | 'runCount' | 'status'>;
 
 const DEMO: PartialWorkflow = {
@@ -51,233 +71,164 @@ const DEMO: PartialWorkflow = {
   logicPrompt: 'Validate invoice terminal charges by cross-referencing MTOW master, IoCC flight data, and YYZ rate schedule.',
   tags: ['terminal-charges', 'mtow', 'IoCC', 'aviation'],
   inputs: [
-    { id: 'i1', name: 'Invoice Data',      type: 'csv',  description: "Rows with Charge Type, A/C ID, MTOW, FLIGHT ID, TOTAL $",          required: true  },
-    { id: 'i2', name: 'MTOW Master',        type: 'csv',  description: 'Aircraft register with certified MTOW keyed by Aircraft ID',        required: true  },
-    { id: 'i3', name: 'IoCC Flight Data',   type: 'csv',  description: 'Operational records: Flight Number, Tail Number, Date',             required: true  },
-    { id: 'i4', name: 'Rate Master (YYZ)', type: 'csv',  description: 'YYZ rate schedule — MTOW weight tiers and terminal charge amounts', required: true  },
+    { id: 'i1', name: 'Invoice Data', type: 'csv', description: "Rows with Charge Type, A/C ID, MTOW, FLIGHT ID, TOTAL $", required: true, columns: ['invoice_no', 'charge_type', 'aircraft_id', 'mtow_kg', 'flight_id', 'total_amount', 'billing_date', 'currency'] },
+    { id: 'i2', name: 'MTOW Master', type: 'csv', description: 'Aircraft register with certified MTOW keyed by Aircraft ID', required: true, columns: ['aircraft_id', 'aircraft_type', 'certified_mtow', 'mtow_unit', 'registration_date'] },
+    { id: 'i3', name: 'IoCC Flight Data', type: 'csv', description: 'Operational records: Flight Number, Tail Number, Date', required: true, columns: ['flight_number', 'tail_number', 'flight_date', 'origin', 'destination', 'status'] },
+    { id: 'i4', name: 'Rate Master (YYZ)', type: 'csv', description: 'YYZ rate schedule — MTOW weight tiers and terminal charge amounts', required: true, columns: ['weight_tier_min', 'weight_tier_max', 'rate_per_ton', 'effective_date', 'currency'] },
+    { id: 'i5', name: 'Airline Operator Registry', type: 'csv', description: 'Master list of airline operators with ICAO/IATA codes and contact details', required: false, columns: ['icao_code', 'iata_code', 'operator_name', 'country', 'contact_email'] },
+    { id: 'i6', name: 'Currency Exchange Rates', type: 'csv', description: 'Daily FX rates for multi-currency invoice reconciliation', required: false, columns: ['date', 'base_currency', 'target_currency', 'exchange_rate'] },
+    { id: 'i7', name: 'Historical Audit Log', type: 'csv', description: 'Previous audit findings for trend analysis and repeat-flag detection', required: false, columns: ['audit_id', 'flight_id', 'finding_type', 'amount_delta', 'audit_date', 'status'] },
   ],
   output: {
     type: 'flags',
     title: 'Audit Findings Report',
     description: 'Row-level results: MTOW status, flight verification, charge delta, and consolidated remarks',
     fields: [
-      { name: 'Flight ID',         type: 'string', description: 'Normalised flight ID' },
+      { name: 'Flight ID', type: 'string', description: 'Normalised flight ID' },
       { name: 'MTOW_Match_Status', type: 'string', description: 'Match | Mismatch | Not Found | Missing' },
-      { name: 'Flight_In_IoCC',    type: 'string', description: 'Found / NOT FOUND in IoCC' },
+      { name: 'Flight_In_IoCC', type: 'string', description: 'Found / NOT FOUND in IoCC' },
       { name: 'Calculated_Charge', type: 'number', description: 'Expected charge per rate master' },
-      { name: 'Excess_Charge',     type: 'number', description: 'Invoice TOTAL $ − Calculated_Charge' },
-      { name: 'Remarks',           type: 'string', description: 'OVERCHARGE / UNDERCHARGE / OK' },
+      { name: 'Excess_Charge', type: 'number', description: 'Invoice TOTAL $ - Calculated_Charge' },
+      { name: 'Remarks', type: 'string', description: 'OVERCHARGE / UNDERCHARGE / OK' },
     ],
   },
   steps: [
-    {
-      id: 'step-1', name: 'Filter Terminal Charges', type: 'extract',
-      description: "Select only rows where Charge Type = 'Terminal/Terminaux'",
-      dataFiles: ['i1'],
-      columnMappings: [{ from: 'Charge Type', to: 'Filtered Dataset', description: "= 'Terminal/Terminaux'" }],
-      subSteps: ["Identify rows where Charge Type = 'Terminal/Terminaux'", 'Store filtered rows as working dataset'],
-    },
-    {
-      id: 'step-2', name: 'Validate MTOW', type: 'validate',
-      description: 'Merge invoice data with MTOW Master and compare weight values',
-      dataFiles: ['i1', 'i2'],
-      columnMappings: [
-        { from: 'A/C ID (Invoice)',   to: 'Aircraft (Master)',  description: 'Merge join key' },
-        { from: 'MTOW (Invoice)',      to: 'MTOW_Master',        description: 'Renamed after merge' },
-        { from: 'MTOW (metric tons)', to: 'MTOW (kg)',           description: '× 1,000 · round to nearest 1,000' },
-        { from: 'MTOW comparison',    to: 'MTOW_Match_Status',  description: 'Match | Mismatch | Not Found | Missing' },
-      ],
-      subSteps: [
-        "Merge Invoice with MTOW Master on 'A/C ID' ↔ 'Aircraft'",
-        "Rename merged column to 'MTOW_Master', drop 'Aircraft'",
-        'Convert MTOW metric tons → kg, round to nearest 1,000',
-        "Create 'MTOW_Match_Status' column",
-      ],
-    },
-    {
-      id: 'step-3', name: 'Check Flight in IoCC', type: 'compare',
-      description: 'Verify each flight exists in IoCC operational records',
-      dataFiles: ['i1', 'i3'],
-      columnMappings: [
-        { from: 'FLIGHT ID (AIC186)',   to: 'Flight No. (AI0186)', description: 'Add leading zero, normalize prefix' },
-        { from: 'Date (Invoice)',        to: 'Date (IoCC)',          description: 'Normalize to YYYY-MM-DD' },
-        { from: 'Flight + Tail + Date', to: 'Flight_In_IoCC',       description: 'Lookup in IoCC tuple set' },
-      ],
-      subSteps: [
-        'Convert FLIGHT ID: AIC186 → AI0186',
-        'Normalize date formats in both DataFrames',
-        'Build IoCC lookup set (Flight, Tail, Date)',
-        "Add 'Flight_In_IoCC' column",
-      ],
-    },
-    {
-      id: 'step-4', name: 'Calculate Expected Charge', type: 'calculate',
-      description: 'Determine the correct charge using the YYZ Rate Master',
-      dataFiles: ['i1', 'i2', 'i4'],
-      columnMappings: [
-        { from: 'MTOW_Master (kg)',  to: 'MTOW (metric tons)', description: '÷ 1,000 for rate-tier lookup' },
-        { from: 'YYZ Rate Tier',     to: 'Calculated_Charge',  description: 'Rate × MTOW (metric tons)' },
-      ],
-      subSteps: [
-        'Extract YYZ rate schedule from Rate Master',
-        'Convert MTOW_Master kg → metric tons',
-        'Find applicable rate bracket',
-        "Add 'Calculated_Charge' column",
-      ],
-    },
-    {
-      id: 'step-5', name: 'Compute Excess Charge', type: 'calculate',
-      description: 'Calculate difference between invoiced and calculated amounts',
-      dataFiles: ['i1'],
-      columnMappings: [{ from: 'TOTAL $', to: 'Excess_Charge', description: 'TOTAL $ − Calculated_Charge' }],
-      subSteps: ["Subtract 'Calculated_Charge' from 'TOTAL $'", "Store result in 'Excess_Charge' column"],
-    },
-    {
-      id: 'step-6', name: 'Generate Audit Remarks', type: 'flag',
-      description: 'Produce per-row MTOW, flight, and charge remarks',
-      dataFiles: ['i1'],
-      columnMappings: [
-        { from: 'MTOW_Match_Status',  to: 'MTOW_Remark',          description: 'OK | Not Found | Missing | weight diff' },
-        { from: 'Flight_In_IoCC',     to: 'Flight_Remark',         description: 'Found in IoCC | NOT FOUND' },
-        { from: 'Excess_Charge',      to: 'Charge_Remark',         description: 'OVERCHARGE | UNDERCHARGE | OK + $' },
-        { from: 'All three remarks',  to: 'Consolidated_Remarks',  description: 'Combined per row' },
-      ],
-      subSteps: [
-        "MTOW Remark: OK | Not Found | Missing | weight diff",
-        "Flight Remark: Found | NOT FOUND in IoCC",
-        "Charge Remark: OVERCHARGE | UNDERCHARGE | OK",
-        'Consolidate into one Remarks column',
-      ],
-    },
+    { id: 'step-1', name: 'Filter Terminal Charges', type: 'extract', description: "Select only rows where Charge Type = 'Terminal/Terminaux'", dataFiles: ['i1'], columnMappings: [{ from: 'Charge Type', to: 'Filtered Dataset', description: "= 'Terminal/Terminaux'" }], subSteps: ["Identify rows where Charge Type = 'Terminal/Terminaux'", 'Store filtered rows as working dataset'] },
+    { id: 'step-2', name: 'Validate MTOW', type: 'validate', description: 'Merge invoice data with MTOW Master and compare weight values', dataFiles: ['i1', 'i2'], columnMappings: [{ from: 'A/C ID (Invoice)', to: 'Aircraft (Master)', description: 'Merge join key' }, { from: 'MTOW (Invoice)', to: 'MTOW_Master', description: 'Renamed after merge' }, { from: 'MTOW (metric tons)', to: 'MTOW (kg)', description: '* 1,000 / round to nearest 1,000' }, { from: 'MTOW comparison', to: 'MTOW_Match_Status', description: 'Match | Mismatch | Not Found | Missing' }], subSteps: ["Merge Invoice with MTOW Master on 'A/C ID' <> 'Aircraft'", "Rename merged column to 'MTOW_Master', drop 'Aircraft'", 'Convert MTOW metric tons to kg, round to nearest 1,000', "Create 'MTOW_Match_Status' column"] },
+    { id: 'step-3', name: 'Check Flight in IoCC', type: 'compare', description: 'Verify each flight exists in IoCC operational records', dataFiles: ['i1', 'i3'], columnMappings: [{ from: 'FLIGHT ID (AIC186)', to: 'Flight No. (AI0186)', description: 'Add leading zero, normalize prefix' }, { from: 'Date (Invoice)', to: 'Date (IoCC)', description: 'Normalize to YYYY-MM-DD' }, { from: 'Flight + Tail + Date', to: 'Flight_In_IoCC', description: 'Lookup in IoCC tuple set' }], subSteps: ['Convert FLIGHT ID: AIC186 to AI0186', 'Normalize date formats in both DataFrames', 'Build IoCC lookup set (Flight, Tail, Date)', "Add 'Flight_In_IoCC' column"] },
+    { id: 'step-4', name: 'Calculate Expected Charge', type: 'calculate', description: 'Determine the correct charge using the YYZ Rate Master', dataFiles: ['i1', 'i2', 'i4'], columnMappings: [{ from: 'MTOW_Master (kg)', to: 'MTOW (metric tons)', description: '/ 1,000 for rate-tier lookup' }, { from: 'YYZ Rate Tier', to: 'Calculated_Charge', description: 'Rate * MTOW (metric tons)' }], subSteps: ['Extract YYZ rate schedule from Rate Master', 'Convert MTOW_Master kg to metric tons', 'Find applicable rate bracket', "Add 'Calculated_Charge' column"] },
+    { id: 'step-5', name: 'Compute Excess Charge', type: 'calculate', description: 'Calculate difference between invoiced and calculated amounts', dataFiles: ['i1'], columnMappings: [{ from: 'TOTAL $', to: 'Excess_Charge', description: 'TOTAL $ - Calculated_Charge' }], subSteps: ["Subtract 'Calculated_Charge' from 'TOTAL $'", "Store result in 'Excess_Charge' column"] },
+    { id: 'step-6', name: 'Generate Audit Remarks', type: 'flag', description: 'Produce per-row MTOW, flight, and charge remarks', dataFiles: ['i1'], columnMappings: [{ from: 'MTOW_Match_Status', to: 'MTOW_Remark', description: 'OK | Not Found | Missing | weight diff' }, { from: 'Flight_In_IoCC', to: 'Flight_Remark', description: 'Found in IoCC | NOT FOUND' }, { from: 'Excess_Charge', to: 'Charge_Remark', description: 'OVERCHARGE | UNDERCHARGE | OK + $' }, { from: 'All three remarks', to: 'Consolidated_Remarks', description: 'Combined per row' }], subSteps: ["MTOW Remark: OK | Not Found | Missing | weight diff", "Flight Remark: Found | NOT FOUND in IoCC", "Charge Remark: OVERCHARGE | UNDERCHARGE | OK", 'Consolidate into one Remarks column'] },
   ],
 };
 
-/* ─── Clarification phase types ───────────────────────────────────────── */
-type ClarifyPhase =
-  | 'idle'           // default — no clarification in progress
-  | 'upload'         // user is uploading files
-  | 'checking_files' // AI is checking file sufficiency
-  | 'need_files'     // AI says files are insufficient
-  | 'checking_mapping' // AI is mapping files to steps
-  | 'need_mapping'   // AI can't auto-map, user must help
-  | 'checking_columns' // AI is mapping columns
-  | 'need_columns'   // AI can't auto-map columns, user must help
-  | 'ready';         // all checks passed
+/* ---- Clarification types ---------------------------------------------- */
+type ClarifyPhase = 'idle' | 'upload' | 'checking_files' | 'need_files' | 'checking_mapping' | 'need_mapping' | 'checking_columns' | 'need_columns' | 'ready';
 
-interface UploadedFile {
-  file: File;
-  name: string;
-  type: string;
-  headers?: string[];
-  rowCount?: number;
-  sampleRows?: string[][];
-}
+interface UploadedFile { file: File; name: string; type: string; headers?: string[]; rowCount?: number; sampleRows?: string[][]; }
+interface FileMatch { inputId: string; fileName: string; confidence: string; }
+interface FileMissing { inputId: string; inputName: string; reason: string; }
+interface FileMapping { fileName: string; inputId: string; inputName: string; confidence: string; reason: string; }
+interface Ambiguous { fileName: string; possibleInputs: string[]; reason: string; }
+interface ColMapping { expectedFrom: string; actualColumn: string | null; expectedTo: string; confidence: string; suggestion?: string; }
+interface StepColMapping { stepId: string; stepName: string; mappings: ColMapping[]; }
+interface UnmappedCol { stepId: string; expectedFrom: string; availableHeaders: string[]; suggestion: string; }
 
-interface FileMatch {
-  inputId: string;
-  fileName: string;
-  confidence: string;
-}
-
-interface FileMissing {
-  inputId: string;
-  inputName: string;
-  reason: string;
-}
-
-interface FileMapping {
-  fileName: string;
-  inputId: string;
-  inputName: string;
-  confidence: string;
-  reason: string;
-}
-
-interface Ambiguous {
-  fileName: string;
-  possibleInputs: string[];
-  reason: string;
-}
-
-interface ColMapping {
-  expectedFrom: string;
-  actualColumn: string | null;
-  expectedTo: string;
-  confidence: string;
-  suggestion?: string;
-}
-
-interface StepColMapping {
-  stepId: string;
-  stepName: string;
-  mappings: ColMapping[];
-}
-
-interface UnmappedCol {
-  stepId: string;
-  expectedFrom: string;
-  availableHeaders: string[];
-  suggestion: string;
-}
-
-const TABS = ['Workflow', 'Export', 'Analytics', 'Manager'] as const;
-
-/* ─── Clarification step indicator ─────────────────────────────────────── */
-const CLARIFY_STEPS = [
-  { key: 'files',   label: 'File Check',      icon: '📁' },
-  { key: 'mapping', label: 'File Mapping',     icon: '🔗' },
-  { key: 'columns', label: 'Column Mapping',   icon: '📋' },
+/* ---- Vertical stepper config (4 steps) -------------------------------- */
+const VSTEPS = [
+  { num: 1, title: 'Write prompt', icon: Pencil },
+  { num: 2, title: 'Upload Files', icon: Upload },
+  { num: 3, title: 'Map Data', icon: Link2 },
+  { num: 4, title: 'Review & Run', icon: Play },
 ] as const;
 
-function phaseToStepIndex(phase: ClarifyPhase): number {
-  if (phase === 'upload' || phase === 'checking_files' || phase === 'need_files') return 0;
-  if (phase === 'checking_mapping' || phase === 'need_mapping') return 1;
-  if (phase === 'checking_columns' || phase === 'need_columns') return 2;
-  if (phase === 'ready') return 3;
-  return -1;
+function phaseToFlowStep(phase: ClarifyPhase, hasWorkflow: boolean): number {
+  if (phase === 'ready') return 4;
+  if (phase === 'checking_columns' || phase === 'need_columns' || phase === 'checking_mapping' || phase === 'need_mapping') return 3;
+  if (phase === 'upload' || phase === 'checking_files' || phase === 'need_files') return 2;
+  return hasWorkflow ? 2 : 1;
 }
 
 function isPhaseLoading(phase: ClarifyPhase): boolean {
   return phase === 'checking_files' || phase === 'checking_mapping' || phase === 'checking_columns';
 }
 
-/* ═══════════════════════════════════════════════════════════════════════ */
+/* ---- Output data ------------------------------------------------------ */
+const AUDIT_TABLE_DATA = [
+  { id: 'INV-001', date: '2014-03-15', vendor: 'Air India',           amount: '$12,450.00', status: 'FLAGGED', reason: 'MTOW Mismatch' },
+  { id: 'INV-002', date: '2014-03-16', vendor: 'Emirates',            amount: '$8,920.00',  status: 'CLEAN',   reason: '\u2014' },
+  { id: 'INV-003', date: '2014-03-16', vendor: 'Singapore Airlines',  amount: '$15,200.00', status: 'FLAGGED', reason: 'Excess Charge' },
+  { id: 'INV-004', date: '2014-03-17', vendor: 'Cathay Pacific',      amount: '$6,780.00',  status: 'CLEAN',   reason: '\u2014' },
+  { id: 'INV-005', date: '2014-03-17', vendor: 'Qatar Airways',       amount: '$22,100.00', status: 'FLAGGED', reason: 'Invalid ID' },
+];
+
+const BAR_CHART_DATA = [
+  { airline: 'Air India',  value: 75, color: 'bg-blue-500' },
+  { airline: 'Cathaway',   value: 55, color: 'bg-violet-500' },
+  { airline: 'Emirates',   value: 90, color: 'bg-emerald-500' },
+  { airline: 'Singapore',  value: 65, color: 'bg-amber-500' },
+  { airline: 'Qatar',      value: 80, color: 'bg-rose-500' },
+  { airline: 'Asiana',     value: 40, color: 'bg-purple-500' },
+];
+
+const DONUT_DATA = [
+  { label: 'MTOW Mismatch', pct: 45, color: 'bg-rose-500' },
+  { label: 'Invalid ID',    pct: 25, color: 'bg-amber-500' },
+  { label: 'Excess Charge', pct: 30, color: 'bg-violet-500' },
+];
+
+/* ======================================================================= */
 export default function BuilderPage() {
   const router = useRouter();
-  const [messages, setMessages]             = useState<ChatMessage[]>([]);
-  const [input, setInput]                   = useState('');
-  const [isLoading, setIsLoading]           = useState(false);
-  const [workflow, setWorkflow]             = useState<PartialWorkflow | null>(DEMO);
-  const [isSaving, setIsSaving]             = useState(false);
-  const [savedId, setSavedId]               = useState<string | null>(null);
-  const [activeTab, setActiveTab]           = useState<typeof TABS[number]>('Workflow');
-  const [selectedStepId, setSelectedStepId] = useState<string | null>('step-2');
-  const [lastSaved, setLastSaved]           = useState<Date | null>(null);
-  const [isDemo, setIsDemo]                 = useState(true);
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    { role: 'user', content: 'Create a workflow that analyzes financial statements from PDFs and generates compliance reports.' },
+    { role: 'assistant', content: "Hi! I can help you build your audit workflow. Try describing what you need, like: \"Create a workflow that analyzes financial statements from PDFs and generates compliance reports.\"" },
+    { role: 'assistant', content: "I've analyzed your prompt and built the **Source Data Verification (SDV) Audit Workflow**.\nNow, please upload the required data files in the middle section so I can begin the mapping process." },
+  ]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [workflow, setWorkflow] = useState<PartialWorkflow | null>(DEMO);
+  const [isSaving, setIsSaving] = useState(false);
+  const [savedId, setSavedId] = useState<string | null>(null);
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [isDemo, setIsDemo] = useState(true);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Clarification state
-  const [clarifyPhase, setClarifyPhase]           = useState<ClarifyPhase>('idle');
-  const [uploadedFiles, setUploadedFiles]         = useState<UploadedFile[]>([]);
-  const [fileMatches, setFileMatches]             = useState<FileMatch[]>([]);
-  const [fileMissing, setFileMissing]             = useState<FileMissing[]>([]);
-  const [fileMappings, setFileMappings]           = useState<FileMapping[]>([]);
-  const [ambiguousFiles, setAmbiguousFiles]       = useState<Ambiguous[]>([]);
-  const [stepColMappings, setStepColMappings]     = useState<StepColMapping[]>([]);
-  const [unmappedCols, setUnmappedCols]           = useState<UnmappedCol[]>([]);
-  const [clarifyMessage, setClarifyMessage]       = useState('');
-  const [manualMappings, setManualMappings]       = useState<Record<string, string>>({});  // ambiguous file → chosen inputId
-  const [manualColMappings, setManualColMappings] = useState<Record<string, string>>({}); // "stepId:expectedFrom" → chosen header
+  const [clarifyPhase, setClarifyPhase] = useState<ClarifyPhase>('idle');
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [fileMatches, setFileMatches] = useState<FileMatch[]>([]);
+  const [fileMissing, setFileMissing] = useState<FileMissing[]>([]);
+  const [fileMappings, setFileMappings] = useState<FileMapping[]>([]);
+  const [ambiguousFiles, setAmbiguousFiles] = useState<Ambiguous[]>([]);
+  const [stepColMappings, setStepColMappings] = useState<StepColMapping[]>([]);
+  const [unmappedCols, setUnmappedCols] = useState<UnmappedCol[]>([]);
+  const [clarifyMessage, setClarifyMessage] = useState('');
+  const [manualMappings, setManualMappings] = useState<Record<string, string>>({});
+  const [manualColMappings, setManualColMappings] = useState<Record<string, string>>({});
+  const [expandedSchemas, setExpandedSchemas] = useState<Record<string, boolean>>({});
+  const [openJustification, setOpenJustification] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Layout state
+  const [activeFlowStep, setActiveFlowStep] = useState<number>(workflow ? 2 : 1);
+  const [rightPanelTab, setRightPanelTab] = useState<'plan' | 'input' | 'output'>('plan');
+  const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [zoomLevel, setZoomLevel] = useState(100);
+
+  // Execution state
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [executionPhase, setExecutionPhase] = useState<'idle' | 'running' | 'clarify' | 'finalizing' | 'done'>('idle');
+  const [showOutput, setShowOutput] = useState(false);
+  const [outputTab, setOutputTab] = useState<'editor' | 'output' | 'analytics' | 'manager'>('output');
+  const [selectedClarifyOption, setSelectedClarifyOption] = useState<string | null>(null);
+  const [dashboardLayout, setDashboardLayout] = useState<'table' | 'dashboard' | 'split'>('dashboard');
+
+  // Dashboard KPI checkboxes
+  const [kpiChecks, setKpiChecks] = useState({
+    totalRecords: true,
+    duplicatesFound: true,
+    amountAtRisk: true,
+    comparisonLastRun: false,
+    duplicateTrend: false,
+  });
+
+  // AI Suggestions checkboxes
+  const [aiSuggestions, setAiSuggestions] = useState({
+    trendColumn: true,
+    varianceHighlight: true,
+    timeToResolution: false,
+    autoGroupVendor: false,
+  });
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-  const selectedStep      = workflow?.steps.find(s => s.id === selectedStepId) ?? null;
-  const selectedStepIndex = workflow?.steps.findIndex(s => s.id === selectedStepId) ?? -1;
-  const dataFilesForStep  = (selectedStep?.dataFiles ?? [])
-    .map(id => workflow?.inputs.find(i => i.id === id)).filter(Boolean) as Workflow['inputs'];
+  useEffect(() => {
+    const step = phaseToFlowStep(clarifyPhase, !!workflow);
+    setActiveFlowStep(step);
+  }, [clarifyPhase, workflow]);
 
-  /* ─── Parse CSV headers from file ──────────────────────────────── */
+  /* ---- File parsing --------------------------------------------------- */
   async function parseFile(file: File): Promise<UploadedFile> {
     const result: UploadedFile = { file, name: file.name, type: file.type || 'unknown' };
     if (file.name.endsWith('.csv') || file.type === 'text/csv') {
@@ -292,50 +243,55 @@ export default function BuilderPage() {
     return result;
   }
 
-  /* ─── Handle file upload ───────────────────────────────────────── */
   async function handleFilesSelected(fileList: FileList) {
+    const names = Array.from(fileList).map(f => f.name).join(', ');
+    addUserChat(`Upload files: ${names}`);
     const parsed: UploadedFile[] = [];
-    for (let i = 0; i < fileList.length; i++) {
-      parsed.push(await parseFile(fileList[i]));
-    }
+    for (let i = 0; i < fileList.length; i++) parsed.push(await parseFile(fileList[i]));
     setUploadedFiles(prev => [...prev, ...parsed]);
+    addClarifyChat(`Uploaded **${fileList.length}** file(s): ${names}. You can now click **Verify with Ira** to proceed.`);
   }
 
-  /* ─── Start clarification flow ─────────────────────────────────── */
+  function addUserChat(content: string) { setMessages(prev => [...prev, { role: 'user', content }]); }
+
+  function autoFillSampleFiles() {
+    if (!workflow) return;
+    addUserChat("Auto-fill sample files");
+    const sampleFiles: UploadedFile[] = workflow.inputs.map(inp => {
+      const fileName = inp.name.toLowerCase().replace(/[^a-z0-9]+/g, '_') + '_sample.csv';
+      const blob = new Blob(['sample'], { type: 'text/csv' });
+      const file = new File([blob], fileName, { type: 'text/csv' });
+      return {
+        file,
+        name: fileName,
+        type: 'text/csv',
+        headers: inp.columns ?? ['col1', 'col2', 'col3'],
+        rowCount: 100,
+        sampleRows: [['sample1', 'sample2', 'sample3']],
+      };
+    });
+    setUploadedFiles(sampleFiles);
+    addClarifyChat("Sample files have been auto-populated for all expected inputs. You can now proceed with verification.");
+  }
+
   function startClarification() {
     if (!workflow || uploadedFiles.length === 0) return;
+    addUserChat("Verify with Ira");
     setClarifyPhase('checking_files');
     runFileSufficiencyCheck();
   }
 
-  /* ─── Phase 1: Check file sufficiency ──────────────────────────── */
+  /* ---- Phase 1: Check files ------------------------------------------- */
   async function runFileSufficiencyCheck() {
-    setClarifyPhase('checking_files');
-    setClarifyMessage('');
+    setClarifyPhase('checking_files'); setClarifyMessage('');
     try {
-      const res = await fetch('/api/clarify-workflow', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phase: 'check_files',
-          workflow: { inputs: workflow!.inputs, steps: workflow!.steps, name: workflow!.name, description: workflow!.description },
-          files: uploadedFiles.map(f => ({ name: f.name, type: f.type, headers: f.headers, rowCount: f.rowCount })),
-        }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-
-      setFileMatches(data.matched ?? []);
-      setFileMissing(data.missing ?? []);
-      setClarifyMessage(data.message ?? '');
-
-      // Add AI message to chat
-      addClarifyChat(data.message ?? (data.sufficient ? 'All required files are present.' : 'Some files are missing.'));
-
+      const data = await clarifyWorkflow({ phase: 'check_files', workflow: { inputs: workflow!.inputs, steps: workflow!.steps, name: workflow!.name, description: workflow!.description }, files: uploadedFiles.map(f => ({ name: f.name, type: f.type, headers: f.headers, rowCount: f.rowCount })) });
+      setFileMatches(data.matched ?? []); setFileMissing(data.missing ?? []); setClarifyMessage(data.message ?? '');
       if (data.sufficient) {
-        // Move to phase 2
+        addClarifyChat("I've pre-populated the required files for you. Now, click **Verify with Ira** to proceed.");
         runFileMappingCheck();
       } else {
+        addClarifyChat(data.message ?? 'Some files are missing.');
         setClarifyPhase('need_files');
       }
     } catch (e) {
@@ -345,34 +301,14 @@ export default function BuilderPage() {
     }
   }
 
-  /* ─── Phase 2: Map files to steps ──────────────────────────────── */
+  /* ---- Phase 2: Map files --------------------------------------------- */
   async function runFileMappingCheck() {
-    setClarifyPhase('checking_mapping');
-    setClarifyMessage('');
+    setClarifyPhase('checking_mapping'); setClarifyMessage('');
     try {
-      const res = await fetch('/api/clarify-workflow', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phase: 'map_files',
-          workflow: { inputs: workflow!.inputs, steps: workflow!.steps, name: workflow!.name, description: workflow!.description },
-          files: uploadedFiles.map(f => ({ name: f.name, type: f.type, headers: f.headers, rowCount: f.rowCount, sampleRows: f.sampleRows })),
-        }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-
-      setFileMappings(data.fileMappings ?? []);
-      setAmbiguousFiles(data.ambiguous ?? []);
-      setClarifyMessage(data.message ?? '');
-
-      addClarifyChat(data.message ?? (data.mapped ? 'All files mapped to workflow inputs.' : 'Some files need manual mapping.'));
-
-      if (data.mapped) {
-        runColumnMappingCheck();
-      } else {
-        setClarifyPhase('need_mapping');
-      }
+      const data = await clarifyWorkflow({ phase: 'map_files', workflow: { inputs: workflow!.inputs, steps: workflow!.steps, name: workflow!.name, description: workflow!.description }, files: uploadedFiles.map(f => ({ name: f.name, type: f.type, headers: f.headers, rowCount: f.rowCount, sampleRows: f.sampleRows })) });
+      setFileMappings(data.fileMappings ?? []); setAmbiguousFiles(data.ambiguous ?? []); setClarifyMessage(data.message ?? '');
+      addClarifyChat("Great! I've detected all required files. I've automatically suggested mappings for them. Please review the **Map Data** step in the middle section.");
+      setClarifyPhase('need_mapping');
     } catch (e) {
       setClarifyMessage(`Error: ${e instanceof Error ? e.message : 'Unknown'}`);
       addClarifyChat(`Error mapping files: ${e instanceof Error ? e.message : 'Unknown'}`);
@@ -380,35 +316,14 @@ export default function BuilderPage() {
     }
   }
 
-  /* ─── Phase 3: Map columns ─────────────────────────────────────── */
+  /* ---- Phase 3: Map columns ------------------------------------------- */
   async function runColumnMappingCheck() {
-    setClarifyPhase('checking_columns');
-    setClarifyMessage('');
+    setClarifyPhase('checking_columns'); setClarifyMessage('');
     try {
-      const res = await fetch('/api/clarify-workflow', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phase: 'map_columns',
-          workflow: { inputs: workflow!.inputs, steps: workflow!.steps, name: workflow!.name, description: workflow!.description },
-          files: uploadedFiles.map(f => ({ name: f.name, type: f.type, headers: f.headers, rowCount: f.rowCount, sampleRows: f.sampleRows })),
-        }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-
-      setStepColMappings(data.stepColumnMappings ?? []);
-      setUnmappedCols(data.unmappedColumns ?? []);
-      setClarifyMessage(data.message ?? '');
-
-      addClarifyChat(data.message ?? (data.mapped ? 'All columns mapped successfully!' : 'Some columns need manual mapping.'));
-
-      if (data.mapped) {
-        setClarifyPhase('ready');
-        addClarifyChat('✅ Input ready to enter! All files, mappings, and columns have been verified.');
-      } else {
-        setClarifyPhase('need_columns');
-      }
+      const data = await clarifyWorkflow({ phase: 'map_columns', workflow: { inputs: workflow!.inputs, steps: workflow!.steps, name: workflow!.name, description: workflow!.description }, files: uploadedFiles.map(f => ({ name: f.name, type: f.type, headers: f.headers, rowCount: f.rowCount, sampleRows: f.sampleRows })) });
+      setStepColMappings(data.stepColumnMappings ?? []); setUnmappedCols(data.unmappedColumns ?? []); setClarifyMessage(data.message ?? '');
+      addClarifyChat("Mappings confirmed. Now, let's align the columns. I've matched most of them, but I need you to double-check the **Amount** field in the Invoice Data.");
+      setClarifyPhase('need_columns');
     } catch (e) {
       setClarifyMessage(`Error: ${e instanceof Error ? e.message : 'Unknown'}`);
       addClarifyChat(`Error mapping columns: ${e instanceof Error ? e.message : 'Unknown'}`);
@@ -416,24 +331,18 @@ export default function BuilderPage() {
     }
   }
 
-  /* ─── Helper: add clarification message to chat ────────────────── */
-  function addClarifyChat(content: string) {
-    setMessages(prev => [...prev, { role: 'assistant', content }]);
-  }
-
-  /* ─── Manual mapping confirmations ─────────────────────────────── */
+  function addClarifyChat(content: string) { setMessages(prev => [...prev, { role: 'assistant', content }]); }
   function confirmManualMappings() {
-    // User resolved ambiguous file mappings → advance to column check
+    addUserChat("Confirm & Align Columns");
     runColumnMappingCheck();
   }
-
   function confirmManualColumns() {
-    // User resolved column mappings → mark ready
+    addUserChat("Confirm Mappings");
+    addClarifyChat("Excellent! Everything is mapped and ready. You can now review the final workflow and run a test audit.");
     setClarifyPhase('ready');
-    addClarifyChat('✅ Input ready to enter! All files, mappings, and columns have been verified.');
   }
 
-  /* ─── Chat send ────────────────────────────────────────────────── */
+  /* ---- Chat send ------------------------------------------------------ */
   async function sendMessage(text?: string) {
     const msg = (text ?? input).trim();
     if (!msg || isLoading) return;
@@ -441,12 +350,46 @@ export default function BuilderPage() {
     const userMsg: ChatMessage = { role: 'user', content: msg };
     const next = [...messages, userMsg];
     setMessages(next); setInput(''); setIsLoading(true);
+
+    // If no workflow yet, generate one
+    if (!workflow) {
+      try {
+        const data = await generateWorkflow(next.map(m => ({ role: m.role, content: m.content })));
+        setMessages([...next, { role: 'assistant', content: data.message ?? 'Done.' }]);
+        if (data.workflow) { setWorkflow(data.workflow); setSavedId(null); setClarifyPhase('idle'); setUploadedFiles([]); setActiveFlowStep(2); }
+      } catch (e) {
+        setMessages([...next, { role: 'assistant', content: `Error: ${e instanceof Error ? e.message : 'Unknown'}` }]);
+      } finally { setIsLoading(false); }
+      return;
+    }
+
+    // Workflow exists — handle contextual conversation based on active step
     try {
-      const res  = await fetch('/api/generate-workflow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: next.map(m => ({ role: m.role, content: m.content })) }) });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setMessages([...next, { role: 'assistant', content: data.message ?? 'Done.' }]);
-      if (data.workflow) { setWorkflow(data.workflow); setSavedId(null); setClarifyPhase('idle'); setUploadedFiles([]); }
+      const lowerMsg = msg.toLowerCase();
+
+      // Check if user wants to regenerate / modify the workflow
+      const isModifyIntent = /\b(change|update|modify|add|remove|replace|redo|regenerate|new workflow|start over)\b/.test(lowerMsg);
+      if (isModifyIntent) {
+        const data = await generateWorkflow(next.map(m => ({ role: m.role, content: m.content })));
+        setMessages([...next, { role: 'assistant', content: data.message ?? 'Done.' }]);
+        if (data.workflow) { setWorkflow(data.workflow); setSavedId(null); setClarifyPhase('idle'); setUploadedFiles([]); setActiveFlowStep(2); }
+        return;
+      }
+
+      // Step-contextual responses
+      let reply = '';
+      if (activeFlowStep === 2) {
+        reply = `I see your message: "${msg}". You're currently on the **Upload Files** step. Please upload the required data files shown in the middle panel, then click **Verify with Ira** to proceed. If you need to modify the workflow, try saying "change" or "add a step".`;
+      } else if (activeFlowStep === 3 && clarifyPhase === 'need_mapping') {
+        reply = `Got it: "${msg}". You're on the **Map Files** step. Please review the file mappings in the middle panel and click **Confirm & Align Columns** when ready. You can click "Change" on any mapping to reassign files.`;
+      } else if (activeFlowStep === 3 && clarifyPhase === 'need_columns') {
+        reply = `Noted: "${msg}". You're on the **Map Columns** step. Please review and adjust any column mappings in the middle panel, then click **Confirm Mappings** to proceed.`;
+      } else if (activeFlowStep === 4) {
+        reply = `Thanks for your input: "${msg}". You're on the **Review & Run** step. When you're satisfied with the execution plan, click **Run Workflow** to start the audit.`;
+      } else {
+        reply = `I understand: "${msg}". Let me know if you'd like to modify the workflow — try saying "add a validation step" or "change the output format".`;
+      }
+      setMessages([...next, { role: 'assistant', content: reply }]);
     } catch (e) {
       setMessages([...next, { role: 'assistant', content: `Error: ${e instanceof Error ? e.message : 'Unknown'}` }]);
     } finally { setIsLoading(false); }
@@ -454,11 +397,12 @@ export default function BuilderPage() {
 
   async function handleSave() {
     if (!workflow) return;
+    addUserChat("Save Workflow");
     setIsSaving(true);
     try {
       const saved = saveWorkflow({ ...workflow, status: 'active' });
       setSavedId(saved.id); setLastSaved(new Date());
-      setTimeout(() => router.push(`/workflow/${saved.id}`), 800);
+      setTimeout(() => router.push(`/workflow-run?id=${saved.id}`), 800);
     } finally { setIsSaving(false); }
   }
 
@@ -468,772 +412,1300 @@ export default function BuilderPage() {
     return d === 0 ? 'Last saved just now' : `Last saved ${d}m ago`;
   }, [lastSaved]);
 
-  const currentClarifyStep = phaseToStepIndex(clarifyPhase);
-  const showClarifyWizard = clarifyPhase !== 'idle';
+  function isStepCompleted(num: number) { return num < activeFlowStep; }
+  function toggleSchemaExpanded(id: string) { setExpandedSchemas(prev => ({ ...prev, [id]: !prev[id] })); }
+  function isSchemaExpanded(id: string) { return expandedSchemas[id] ?? true; } // default expanded for first, collapsed for rest
 
-  /* ─── render ─────────────────────────────────────────────────────── */
+  /* ---- Run Workflow Execution Flow ------------------------------------ */
+  function handleRunWorkflow() {
+    if (!workflow) return;
+    addUserChat("Run Workflow");
+    setIsExecuting(true);
+    setExecutionPhase('running');
+    addClarifyChat(`Initiating test run for **${workflow.name}**. I'm processing the **${uploadedFiles.length || workflow.inputs.length}** uploaded files and applying the audit logic...`);
+
+    // After 3 seconds, show clarification question
+    setTimeout(() => {
+      setExecutionPhase('clarify');
+      addClarifyChat("I've encountered a slight ambiguity in the **MTOW Master** data. Some entries have multiple weight categories. How should I handle these?");
+    }, 3000);
+  }
+
+  function handleClarifyOptionClick(option: string) {
+    setSelectedClarifyOption(option);
+    setMessages(prev => [...prev, { role: 'user', content: option }]);
+    setExecutionPhase('finalizing');
+    addClarifyChat(`Got it. Applying '**${option}**' logic. Finalizing the audit report...`);
+
+    // After 2 seconds, show output
+    setTimeout(() => {
+      setExecutionPhase('done');
+      setIsExecuting(false);
+      setShowOutput(true);
+    }, 2000);
+  }
+
+  /* ---- Generate pseudocode -------------------------------------------- */
+  function generatePseudocode(): string {
+    if (!workflow) return '-- No workflow loaded';
+    const lines: string[] = [`-- ${workflow.name}`, `-- ${workflow.description}`, '', '-- Input Sources'];
+    for (const inp of workflow.inputs) lines.push(`LOAD ${inp.name} AS ${inp.id}  -- ${inp.type.toUpperCase()}: ${inp.description}`);
+    lines.push('');
+    for (const step of workflow.steps) {
+      lines.push(`-- Step: ${step.name} [${step.type.toUpperCase()}]`, `-- ${step.description}`);
+      if (step.dataFiles?.length) lines.push(`USING ${step.dataFiles.join(', ')}`);
+      if (step.columnMappings?.length) { lines.push('BEGIN'); for (const cm of step.columnMappings) lines.push(`  MAP "${cm.from}" -> "${cm.to}"${cm.description ? `  -- ${cm.description}` : ''}`); lines.push('END'); }
+      if (step.subSteps?.length) for (const ss of step.subSteps) lines.push(`  -- ${ss}`);
+      lines.push('');
+    }
+    lines.push('-- Output', `EMIT ${workflow.output.type.toUpperCase()} AS "${workflow.output.title}"`);
+    if (workflow.output.fields?.length) for (const f of workflow.output.fields) lines.push(`  FIELD "${f.name}" : ${f.type}  -- ${f.description}`);
+    return lines.join('\n');
+  }
+
+  /* ---- Helper: Demo file mapping data --------------------------------- */
+  const DEMO_FILES: Record<string, { file: string; confidence: string }> = {
+    'Invoice Data': { file: 'invoice_terminal_charges_2024.csv', confidence: 'high' },
+    'MTOW Master': { file: 'aircraft_mtow_registry.csv', confidence: 'high' },
+    'IoCC Flight Data': { file: 'iocc_flight_operations_q4.csv', confidence: 'high' },
+    'Rate Master (YYZ)': { file: 'yyz_rate_schedule_2024.csv', confidence: 'high' },
+    'Airline Operator Registry': { file: 'airline_operators_master.csv', confidence: 'medium' },
+    'Currency Exchange Rates': { file: 'fx_rates_daily_2024.csv', confidence: 'medium' },
+    'Historical Audit Log': { file: 'prior_audit_findings.csv', confidence: 'medium' },
+  };
+
+  /* ==================================================================== */
+  /* RENDER                                                                */
+  /* ==================================================================== */
   return (
     <div className="flex flex-col h-screen bg-white overflow-hidden">
 
-      {/* ── Header ── */}
-      <header className="flex items-center h-14 px-5 border-b border-slate-200 bg-white z-50 flex-shrink-0 gap-3">
-        <div className="flex items-center gap-2 w-[260px] flex-shrink-0 min-w-0">
-          <Link href="/" className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors flex-shrink-0">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
-          </Link>
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-slate-900 truncate max-w-[200px]">{workflow?.name ?? 'New Workflow'}</div>
-            <div className="text-xs text-slate-400">{lastSavedText ?? 'Not saved yet'}</div>
-          </div>
+      {/* -- Header -- */}
+      <header className="flex items-center h-12 px-4 border-b border-gray-100 bg-white z-50 flex-shrink-0 gap-3">
+        <Button asChild variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-gray-700 transition-all duration-200">
+          <Link href="/"><ArrowLeft className="w-4 h-4" /></Link>
+        </Button>
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-gray-900 truncate max-w-[220px]">{workflow?.name ?? 'New Workflow'}</div>
+          <div className="text-[11px] text-gray-400">{lastSavedText ?? 'Not saved yet'}</div>
         </div>
-
-        <div className="flex-1 flex items-center justify-center">
-          <div className="flex bg-slate-100 rounded-xl p-1 gap-0.5">
-            {TABS.map(t => (
-              <button key={t} onClick={() => setActiveTab(t)}
-                className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${activeTab === t ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-                {t}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 w-[260px] justify-end flex-shrink-0">
-          <button onClick={handleSave} disabled={!workflow || isSaving || !!savedId}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-colors">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
-            {isSaving ? 'Saving…' : savedId ? 'Saved ✓' : 'Save'}
-          </button>
-          <Link href={savedId ? `/workflow/${savedId}` : '#'} onClick={e => { if (!workflow) e.preventDefault(); }}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-xl font-medium transition-colors ${workflow ? 'bg-slate-900 text-white hover:bg-slate-800' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-            Test Run
-          </Link>
-        </div>
+        <div className="flex-1" />
+        {isDemo && <Badge variant="secondary" className="text-[10px] bg-amber-50 text-amber-600 border-amber-200/60 px-1.5 py-0.5">Demo</Badge>}
+        <Button variant="outline" size="sm" onClick={handleSave} disabled={!workflow || isSaving || !!savedId} className="transition-all duration-200 border-gray-200 text-gray-600 hover:border-gray-300 h-8">
+          <Save className="w-3.5 h-3.5 mr-1.5" /> {isSaving ? 'Saving...' : savedId ? 'Saved' : 'Save'}
+        </Button>
+        <Button size="sm" className={cn('text-white transition-all duration-200 h-8', isExecuting ? 'bg-amber-500 hover:bg-amber-600' : 'bg-gray-900 hover:bg-gray-700')}
+          disabled={isExecuting}
+          onClick={() => { if (activeFlowStep === 4 && !showOutput) handleRunWorkflow(); }}>
+          {isExecuting ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Executing...</> : <><Play className="w-3.5 h-3.5 mr-1.5" /> Test Run</>}
+        </Button>
       </header>
 
-      {/* ── Body ── */}
+      {/* -- Body: left rail + 3 panels -- */}
       <div className="flex flex-1 overflow-hidden min-h-0">
 
-        {/* ── Left: AI Assistant ── */}
-        <aside className="flex flex-col w-[260px] flex-shrink-0 border-r border-slate-200 bg-white">
-          <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 flex-shrink-0">
-            <div className="w-6 h-6 rounded-lg bg-indigo-100 flex items-center justify-center">
-              <svg className="w-3.5 h-3.5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
-            </div>
-            <span className="text-sm font-semibold text-slate-800">AI Assistant</span>
-            {isDemo && <span className="ml-auto text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">Example</span>}
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-3 space-y-3">
-            {messages.length === 0 ? (
-              <div className="space-y-2">
-                {isDemo && (
-                  <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3 text-xs text-indigo-700 leading-relaxed">
-                    <p className="font-semibold mb-1">✦ Example loaded</p>
-                    <p>Click any step above to see its data files and column mappings.</p>
-                  </div>
+        {/* === STEP RAIL === */}
+        <nav className="sidebar-dark flex flex-col items-center w-[56px] flex-shrink-0 bg-[#0b0b12] border-r border-white/[0.06] py-6 gap-0">
+          {VSTEPS.map((step, idx) => {
+            const completed = isStepCompleted(step.num);
+            const active = activeFlowStep === step.num;
+            return (
+              <div key={step.num} className="flex flex-col items-center">
+                <button
+                  onClick={() => { if (!showOutput) setActiveFlowStep(step.num); }}
+                  title={step.title}
+                  className={cn(
+                    'w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold transition-all duration-200 focus:outline-none',
+                    completed
+                      ? 'bg-emerald-500 text-white'
+                      : active
+                      ? 'bg-violet-600 text-white ring-2 ring-violet-400/30 ring-offset-1 ring-offset-[#0b0b12]'
+                      : 'bg-white/5 text-gray-500 border border-white/10 hover:bg-white/10 hover:text-gray-300'
+                  )}
+                >
+                  {completed ? <Check className="w-3.5 h-3.5" /> : step.num}
+                </button>
+                {idx < VSTEPS.length - 1 && (
+                  <div className={cn('w-px h-6 my-1', completed ? 'bg-emerald-500/40' : 'bg-white/[0.06]')} />
                 )}
-                <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 text-xs text-slate-600 leading-relaxed">
-                  Describe your workflow in plain English
-                </div>
               </div>
-            ) : (
-              <>
-                {messages.map((m, i) => (
-                  <div key={i} className={`flex gap-2 message-enter ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                    <div className={`w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold ${m.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
-                      {m.role === 'user' ? 'U' : 'AI'}
-                    </div>
-                    <div className={`max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-sm' : 'bg-slate-100 text-slate-700 rounded-tl-sm'}`}>
-                      {m.content}
-                    </div>
-                  </div>
-                ))}
-                {isLoading && (
-                  <div className="flex gap-2">
-                    <div className="w-6 h-6 rounded-full bg-slate-200 flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-slate-600">AI</div>
-                    <div className="bg-slate-100 rounded-xl rounded-tl-sm px-3 py-2 flex items-center gap-1">
-                      <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
-                    </div>
-                  </div>
-                )}
-                <div ref={chatEndRef} />
-              </>
-            )}
+            );
+          })}
+        </nav>
+
+        {/* === LEFT PANEL: Chat === */}
+        <aside className="flex flex-col w-[30%] flex-shrink-0 border-r border-gray-100 bg-white">
+          {/* AI Assistant header */}
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2 flex-shrink-0">
+            <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-500/20 to-blue-500/10 flex items-center justify-center ring-1 ring-violet-200/50">
+              <Sparkles className="w-3.5 h-3.5 text-violet-600" />
+            </div>
+            <span className="text-sm font-medium text-gray-800">AI Assistant</span>
+            {isDemo && <Badge variant="secondary" className="ml-auto text-[10px] bg-amber-50 text-amber-600 border-amber-200/60 px-1.5 py-0.5">Example</Badge>}
           </div>
 
-          <div className="p-3 border-t border-slate-100 flex-shrink-0">
+          {/* Chat messages */}
+          <ScrollArea className="flex-1">
+            <div className="p-4 space-y-3">
+              {messages.length === 0 ? (
+                <div className="space-y-2">
+                  {isDemo && (
+                    <div className="bg-violet-50/60 border border-violet-100 rounded-xl p-3 text-xs text-violet-700 leading-relaxed">
+                      <p className="font-medium mb-1">Example loaded</p>
+                      <p className="text-violet-600/80">Click any step to see its data files and column mappings.</p>
+                    </div>
+                  )}
+                  <div className="bg-gray-50 border border-gray-100 rounded-xl p-3 text-xs text-gray-500 leading-relaxed">
+                    Describe your workflow in plain English
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {messages.map((m, i) => (
+                    <div key={i} className={cn('flex gap-2 message-enter', m.role === 'user' ? 'flex-row-reverse' : '')}>
+                      <div className={cn(
+                        'w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center text-[9px] font-semibold mt-0.5',
+                        m.role === 'user'
+                          ? 'bg-gray-900 text-white'
+                          : 'bg-gradient-to-br from-violet-500 to-blue-500 text-white'
+                      )}>
+                        {m.role === 'user' ? 'U' : 'AI'}
+                      </div>
+                      <div className={cn(
+                        'max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed',
+                        m.role === 'user'
+                          ? 'bg-gray-900 text-white rounded-tr-sm'
+                          : 'bg-gray-50 text-gray-700 rounded-tl-sm border border-gray-100'
+                      )}
+                        dangerouslySetInnerHTML={{ __html: m.content.replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-violet-600">$1</strong>') }}
+                      />
+                    </div>
+                  ))}
+
+                  {/* Auto-fill buttons */}
+                  {workflow && activeFlowStep === 2 && uploadedFiles.length === 0 && messages.length > 0 && !isLoading && (
+                    <div className="flex gap-2 mt-2">
+                      <button onClick={autoFillSampleFiles} className="flex-1 text-xs bg-violet-50 text-violet-700 border border-violet-200/70 rounded-lg px-3 py-2 hover:bg-violet-100 transition-all duration-200 font-medium">
+                        Auto-fill sample files
+                      </button>
+                      <button onClick={() => fileInputRef.current?.click()} className="flex-1 text-xs bg-gray-50 text-gray-600 border border-gray-200 rounded-lg px-3 py-2 hover:bg-gray-100 transition-all duration-200 font-medium">
+                        I'll upload them myself
+                      </button>
+                      <input ref={fileInputRef} type="file" multiple className="hidden" onChange={e => { if (e.target.files) handleFilesSelected(e.target.files); }} />
+                    </div>
+                  )}
+
+                  {/* Clarify options during execution */}
+                  {executionPhase === 'clarify' && !selectedClarifyOption && (
+                    <div className="space-y-1.5 mt-2">
+                      {['Use the maximum weight', 'Use the average weight', 'Flag for manual review'].map(opt => (
+                        <button key={opt} onClick={() => handleClarifyOptionClick(opt)}
+                          className="w-full text-xs bg-white text-gray-700 border border-gray-200 rounded-lg px-3 py-2 hover:bg-violet-50 hover:border-violet-200 hover:text-violet-700 transition-all duration-200 font-medium text-left">
+                          {opt}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Typing indicator — skeleton style */}
+                  {(isLoading || executionPhase === 'running' || executionPhase === 'finalizing') && (
+                    <div className="flex gap-2">
+                      <div className="w-5 h-5 rounded-full bg-gradient-to-br from-violet-500 to-blue-500 flex-shrink-0 flex items-center justify-center text-[9px] font-semibold text-white mt-0.5">AI</div>
+                      <div className="bg-gray-50 border border-gray-100 rounded-xl rounded-tl-sm px-3 py-2.5 flex items-center gap-1">
+                        <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
+                      </div>
+                    </div>
+                  )}
+                  <div ref={chatEndRef} />
+                </>
+              )}
+            </div>
+          </ScrollArea>
+
+          {/* Chat input */}
+          <div className="p-3 border-t border-gray-100 flex-shrink-0">
             <div className="flex gap-1.5 items-end">
-              <textarea value={input} onChange={e => setInput(e.target.value)}
+              <Textarea value={input} onChange={e => setInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
                 placeholder="Describe what you need…" rows={2}
-                className="flex-1 resize-none text-xs border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder:text-slate-400" />
-              <button onClick={() => sendMessage()} disabled={!input.trim() || isLoading}
-                className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-40 transition-colors">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
-              </button>
+                className="flex-1 resize-none text-xs rounded-xl px-3 py-2 border-gray-200 focus:border-violet-300 transition-all duration-200" />
+              <Button onClick={() => sendMessage()} disabled={!input.trim() || isLoading} size="icon" className="bg-violet-600 hover:bg-violet-700 text-white rounded-xl h-9 w-9 transition-all duration-200">
+                <Send className="w-3.5 h-3.5" />
+              </Button>
             </div>
-            <p className="text-[10px] text-slate-400 mt-1.5">Try: &ldquo;Add validation step&rdquo; or &ldquo;Change output to table&rdquo;</p>
+            <p className="text-[10px] text-gray-400 mt-1.5">Try: &ldquo;Add validation step&rdquo; or &ldquo;Change output to table&rdquo;</p>
           </div>
         </aside>
 
-        {/* ── Center ── */}
-        <main className="flex-1 flex flex-col min-h-0 overflow-hidden bg-slate-50">
+        {/* === CENTER PANEL === */}
+        <main className="flex-1 flex flex-col min-h-0 overflow-hidden bg-gradient-to-br from-slate-50 via-white to-violet-50/20">
 
-          {/* ══ Large circular stepper ══ */}
-          <div className="flex-shrink-0 bg-white border-b border-slate-200 shadow-sm">
-            <div className="px-10 py-7 overflow-x-auto">
-              <div className="relative min-w-max">
-                <div className="absolute h-[2px] bg-slate-200 z-0 pointer-events-none"
-                  style={{ top: 36, left: 40, right: 40 }} />
-
-                <div className="relative z-10 flex items-start gap-0">
-
-                  {/* ── START badge ── */}
-                  <div className="flex flex-col items-center gap-3 w-[96px] flex-shrink-0">
-                    <div className="w-[72px] h-[72px] rounded-full flex items-center justify-center shadow-lg flex-shrink-0"
-                      style={{ background: 'linear-gradient(145deg,#6366f1,#3b82f6)' }}>
-                      <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <circle cx="12" cy="12" r="3" strokeWidth={2} />
-                        <path strokeLinecap="round" strokeWidth={2} d="M12 5v2M12 17v2M5 12H3M21 12h-2M7.05 7.05 5.64 5.64M18.36 18.36l-1.41-1.41M7.05 16.95l-1.41 1.41M18.36 5.64l-1.41 1.41" />
-                      </svg>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-[11px] font-bold text-slate-500 tracking-widest uppercase">Start</p>
-                    </div>
-                  </div>
-
-                  {/* ── Steps ── */}
-                  {workflow?.steps.map((step, i) => {
-                    const cfg    = STC[step.type] ?? STC.analyze;
-                    const active = selectedStepId === step.id;
-                    return (
-                      <Fragment key={step.id}>
-                        <div className="flex-shrink-0 w-8 mt-9" />
-                        <button onClick={() => setSelectedStepId(active ? null : step.id)}
-                          className="group flex flex-col items-center gap-3 flex-shrink-0 w-[120px] focus:outline-none">
-                          <div className={`w-[72px] h-[72px] rounded-full flex items-center justify-center transition-all duration-200 flex-shrink-0 ${
-                            active
-                              ? `bg-slate-900 shadow-2xl ring-[5px] ring-offset-2 ${cfg.ring}`
-                              : 'bg-white border-2 border-slate-200 shadow-md group-hover:border-indigo-400 group-hover:shadow-xl group-hover:scale-105'
-                          }`}>
-                            <StepIcon type={step.type} active={active} />
-                          </div>
-                          <div className="text-center w-full px-1">
-                            <p className={`text-sm font-semibold leading-snug mb-1.5 transition-colors ${
-                              active ? 'text-slate-900' : 'text-slate-600 group-hover:text-slate-900'
-                            }`}>
-                              {step.name}
-                            </p>
-                            <span className={`inline-block text-[11px] font-bold px-2.5 py-1 rounded-full ${cfg.bg} ${cfg.text}`}>
-                              {cfg.label.toUpperCase()}
-                            </span>
-                            {active && (
-                              <div className="flex items-center justify-center gap-1.5 mt-2">
-                                <span className={`inline-block w-1.5 h-1.5 rounded-full ${cfg.dot} animate-pulse`} />
-                                <span className={`text-[11px] font-semibold ${cfg.text}`}>Selected</span>
-                              </div>
-                            )}
-                          </div>
-                        </button>
-                      </Fragment>
-                    );
-                  })}
-
-                  <div className="flex-shrink-0 w-8 mt-9" />
-
-                  {/* ── OUTPUT badge ── */}
-                  <div className="flex flex-col items-center gap-3 w-[96px] flex-shrink-0">
-                    <div className="w-[72px] h-[72px] rounded-full bg-emerald-50 border-2 border-emerald-300 flex items-center justify-center shadow-md flex-shrink-0">
-                      <svg className="w-7 h-7 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-sm font-semibold text-emerald-700 mb-1.5">Output</p>
-                      <span className="inline-block text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700">
-                        {(workflow?.output.type ?? 'output').toUpperCase()}
-                      </span>
-                    </div>
-                  </div>
-
-                </div>
-              </div>
+          {/* Output top navigation bar when showing output */}
+          {showOutput && (
+            <div className="flex items-center gap-1 px-4 py-2 border-b border-gray-100 bg-white flex-shrink-0">
+              {(['editor', 'output', 'analytics', 'manager'] as const).map(tab => (
+                <button key={tab} onClick={() => {
+                  if (tab === 'editor') {
+                    // Exit output view and go back to Map Data step for editing
+                    setShowOutput(false);
+                    setExecutionPhase('idle');
+                    setIsExecuting(false);
+                    setSelectedClarifyOption(null);
+                    setClarifyPhase('need_mapping');
+                    setActiveFlowStep(3);
+                    addUserChat('Edit Workflow');
+                    addClarifyChat('You\'re back in the editor. You can modify file mappings, column alignments, or adjust the workflow steps. Click **Review & Run** when you\'re ready to re-run.');
+                  } else {
+                    setOutputTab(tab);
+                  }
+                }}
+                  className={cn('px-4 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 capitalize',
+                    tab === 'editor' ? (showOutput ? 'text-gray-400 hover:bg-gray-50 hover:text-gray-700' : 'bg-violet-50 text-violet-700') :
+                    outputTab === tab ? 'bg-violet-50 text-violet-700' : 'text-gray-400 hover:bg-gray-50 hover:text-gray-700'
+                  )}>
+                  {tab}
+                </button>
+              ))}
             </div>
-          </div>
+          )}
 
-          {/* ══ Expandable step detail panel ══ */}
-          <div className="flex-shrink-0 overflow-hidden border-b border-slate-200"
-            style={{ maxHeight: selectedStepId && selectedStep ? '340px' : '0px', transition: 'max-height 0.28s ease-in-out' }}>
-            {selectedStep && (() => {
-              const cfg = STC[selectedStep.type] ?? STC.analyze;
-              return (
-                <div className="bg-white overflow-y-auto" style={{ maxHeight: '340px' }}>
-                  <div className={`flex items-center justify-between px-6 py-3.5 border-b border-slate-100 ${cfg.bg}`}>
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className={`w-8 h-8 rounded-full bg-white/70 ${cfg.text} text-sm font-bold flex items-center justify-center flex-shrink-0`}>
-                        {selectedStepIndex + 1}
-                      </div>
-                      <div className="min-w-0">
-                        <span className={`text-sm font-bold ${cfg.text}`}>{selectedStep.name}</span>
-                        <span className={`ml-2.5 text-[11px] font-bold px-2 py-0.5 rounded-full bg-white/60 ${cfg.text}`}>{cfg.label.toUpperCase()}</span>
-                        <p className="text-xs text-slate-500 mt-0.5 truncate">{selectedStep.description}</p>
-                      </div>
-                    </div>
-                    <button onClick={() => setSelectedStepId(null)}
-                      className="p-1.5 rounded-lg hover:bg-white/60 text-slate-500 transition-colors flex-shrink-0">
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                    </button>
-                  </div>
-
-                  <div className="p-6">
-                    <div className="grid grid-cols-2 gap-6">
-                      {/* Data Files */}
-                      <div>
-                        <div className="flex items-center gap-2 mb-3">
-                          <div className={`w-1 h-4 rounded-full ${cfg.bar}`} />
-                          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Data Files Used</p>
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${cfg.bg} ${cfg.text}`}>{dataFilesForStep.length}</span>
-                        </div>
-                        {dataFilesForStep.length === 0
-                          ? <p className="text-xs text-slate-400 italic">No files specified</p>
-                          : (
-                            <div className="space-y-2">
-                              {dataFilesForStep.map(inp => (
-                                <div key={inp.id} className="flex items-start gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200 hover:border-slate-300 transition-colors">
-                                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${FILE_BG[inp.type]} ${FILE_TEXT[inp.type]}`}>
-                                    <FileIcon type={inp.type} />
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-semibold text-slate-800 truncate">{inp.name}</p>
-                                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${FILE_BG[inp.type]} ${FILE_TEXT[inp.type]}`}>{inp.type.toUpperCase()}</span>
-                                      {inp.required && <span className="text-[10px] bg-rose-50 text-rose-500 border border-rose-100 px-1.5 py-0.5 rounded">Required</span>}
-                                    </div>
-                                    <p className="text-[11px] text-slate-400 mt-1 leading-relaxed line-clamp-2">{inp.description}</p>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )
-                        }
-                      </div>
-
-                      {/* Column Mappings */}
-                      <div>
-                        <div className="flex items-center gap-2 mb-3">
-                          <div className="w-1 h-4 rounded-full bg-emerald-500" />
-                          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Column Mappings</p>
-                          {selectedStep.columnMappings?.length ? (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">{selectedStep.columnMappings.length}</span>
-                          ) : null}
-                        </div>
-                        {!selectedStep.columnMappings?.length
-                          ? <p className="text-xs text-slate-400 italic">No mappings defined</p>
-                          : (
-                            <div className="space-y-2">
-                              {selectedStep.columnMappings.map((m, j) => (
-                                <div key={j} className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200 hover:border-slate-300 transition-colors">
-                                  <span className="flex-shrink-0 max-w-[30%] truncate px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg text-[11px] font-mono font-semibold" title={m.from}>{m.from}</span>
-                                  <svg className="w-6 h-3 text-slate-400 flex-shrink-0" viewBox="0 0 24 12" fill="none">
-                                    <path d="M0 6H20M16 1l6 5-6 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                                  </svg>
-                                  <span className="flex-shrink-0 max-w-[30%] truncate px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-[11px] font-mono font-semibold" title={m.to}>{m.to}</span>
-                                  {m.description && <span className="text-[10px] text-slate-400 truncate flex-1" title={m.description}>{m.description}</span>}
-                                </div>
-                              ))}
-                            </div>
-                          )
-                        }
-                      </div>
-                    </div>
-
-                    {/* Sub-steps */}
-                    {selectedStep.subSteps?.length ? (
-                      <div className="mt-5 pt-5 border-t border-slate-100">
-                        <div className="flex items-center gap-2 mb-3">
-                          <div className="w-1 h-4 rounded-full bg-amber-400" />
-                          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Sub-steps</p>
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">{selectedStep.subSteps.length}</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          {selectedStep.subSteps.map((s, j) => (
-                            <div key={j} className="flex items-start gap-2.5 p-2.5 bg-amber-50 rounded-xl border border-amber-100">
-                              <div className="w-4 h-4 rounded-full bg-amber-200 text-amber-800 text-[9px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">{j + 1}</div>
-                              <span className="text-[11px] text-slate-600 leading-relaxed">{s}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
-
-          {/* ══ Bottom section: Input Config OR Clarification Wizard ══ */}
-          <div className="flex-1 overflow-y-auto">
+          <ScrollArea className="flex-1">
             <div className="p-6">
 
-              {/* ── Clarification Wizard ── */}
-              {showClarifyWizard ? (
+              {/* ======== OUTPUT VIEW ======== */}
+              {showOutput ? (
                 <div>
-                  {/* Progress Steps */}
-                  <div className="flex items-center justify-center mb-8">
-                    <div className="flex items-center gap-0">
-                      {CLARIFY_STEPS.map((cs, idx) => {
-                        const done = currentClarifyStep > idx;
-                        const active = currentClarifyStep === idx;
-                        const loading = active && isPhaseLoading(clarifyPhase);
-                        return (
-                          <Fragment key={cs.key}>
-                            {idx > 0 && (
-                              <div className={`w-20 h-0.5 ${done ? 'bg-emerald-400' : 'bg-slate-200'} transition-colors`} />
-                            )}
-                            <div className="flex flex-col items-center gap-2">
-                              <div className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold transition-all duration-300 ${
-                                done
-                                  ? 'bg-emerald-100 text-emerald-600 ring-4 ring-emerald-50'
-                                  : active
-                                    ? `bg-indigo-100 text-indigo-600 ring-4 ring-indigo-50 ${loading ? 'animate-pulse' : ''}`
-                                    : 'bg-slate-100 text-slate-400'
-                              }`}>
-                                {done ? (
-                                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
-                                ) : (
-                                  <span>{cs.icon}</span>
-                                )}
-                              </div>
-                              <span className={`text-xs font-semibold ${done ? 'text-emerald-600' : active ? 'text-indigo-600' : 'text-slate-400'}`}>
-                                {cs.label}
-                              </span>
-                            </div>
-                          </Fragment>
-                        );
-                      })}
-                      {/* Ready indicator */}
-                      <div className={`w-20 h-0.5 ${clarifyPhase === 'ready' ? 'bg-emerald-400' : 'bg-slate-200'} transition-colors`} />
-                      <div className="flex flex-col items-center gap-2">
-                        <div className={`w-12 h-12 rounded-full flex items-center justify-center text-lg transition-all duration-300 ${
-                          clarifyPhase === 'ready'
-                            ? 'bg-emerald-500 text-white ring-4 ring-emerald-100 shadow-lg'
-                            : 'bg-slate-100 text-slate-400'
-                        }`}>
-                          {clarifyPhase === 'ready' ? (
-                            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                          ) : '🚀'}
+                  {/* Output header */}
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-violet-100 flex items-center justify-center">
+                        <Zap className="w-5 h-5 text-violet-700" />
+                      </div>
+                      <div>
+                        <h2 className="text-lg font-bold text-slate-900">{workflow?.name ?? 'Workflow'}</h2>
+                        <div className="flex items-center gap-3 mt-0.5">
+                          <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
+                            <CheckCircle2 className="w-3 h-3 mr-1" /> RUN SUCCESSFUL
+                          </Badge>
+                          <span className="text-xs text-slate-400">RUN ID: RWF-4401-B</span>
+                          <span className="text-xs text-slate-400">28.345 840</span>
                         </div>
-                        <span className={`text-xs font-semibold ${clarifyPhase === 'ready' ? 'text-emerald-600' : 'text-slate-400'}`}>
-                          Ready
-                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button variant="ghost" size="icon" className="h-8 w-8"><Download className="w-4 h-4 text-slate-400" /></Button>
+                      <Button size="sm" className="bg-violet-700 hover:bg-violet-800 text-white">
+                        <Download className="w-3.5 h-3.5 mr-1.5" /> Export Report
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Executive Summary */}
+                  <div className="grid grid-cols-4 gap-4 mb-6">
+                    <div className="bg-white rounded-xl border border-slate-200 p-4">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Invoices</p>
+                      <div className="flex items-end gap-2">
+                        <span className="text-2xl font-bold text-slate-900">1,129</span>
+                        <Badge className="bg-emerald-50 text-emerald-600 border-0 text-[10px] mb-1">+13%</Badge>
+                      </div>
+                    </div>
+                    <div className="bg-white rounded-xl border border-slate-200 p-4">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Critical Flags</p>
+                      <div className="flex items-end gap-2">
+                        <span className="text-2xl font-bold text-rose-600">3</span>
+                        <Badge className="bg-rose-50 text-rose-600 border-0 text-[10px] mb-1">+2</Badge>
+                      </div>
+                    </div>
+                    <div className="bg-white rounded-xl border border-slate-200 p-4">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Audit Accuracy</p>
+                      <div className="flex items-end gap-2">
+                        <span className="text-2xl font-bold text-emerald-600">99.4%</span>
+                        <Badge className="bg-emerald-50 text-emerald-600 border-0 text-[10px] mb-1">+8.2%</Badge>
+                      </div>
+                    </div>
+                    <div className="bg-white rounded-xl border border-slate-200 p-4">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Potential Savings</p>
+                      <div className="flex items-end gap-2">
+                        <span className="text-2xl font-bold text-slate-900">$42.5k</span>
+                        <Badge className="bg-violet-50 text-violet-700 border-0 text-[10px] mb-1">New</Badge>
                       </div>
                     </div>
                   </div>
 
-                  {/* Phase Content */}
-                  {isPhaseLoading(clarifyPhase) && (
-                    <div className="flex flex-col items-center py-12">
-                      <div className="w-16 h-16 rounded-full bg-indigo-50 flex items-center justify-center mb-4 animate-spin-slow">
-                        <svg className="w-8 h-8 text-indigo-500 animate-spin" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
+                  {/* AI Summary */}
+                  <div className="bg-gradient-to-br from-violet-50/70 to-blue-50/40 border border-violet-100 rounded-xl p-5 mb-6">
+                    <Badge className="bg-violet-100 text-violet-700 border-0 text-[10px] font-bold mb-3">
+                      <Sparkles className="w-3 h-3 mr-1" /> AI SUMMARY
+                    </Badge>
+                    <p className="text-sm text-slate-700 leading-relaxed">
+                      Scanned <strong className="text-violet-700">12,450 invoices</strong> against 6-month history.
+                      Identified <strong className="text-violet-700">8 potential duplicates</strong> totaling <strong className="text-violet-700">{'\u20B9'}6.10L at risk</strong>.
+                      Highest confidence match: INV-4521 vs INV-3102 (Acme Corp, 96% match).
+                      <strong className="text-violet-700"> 3 invoices</strong> from the same vendor within 48 hours flagged as suspicious.
+                      False positive rate: 4.2% (down from 6.5% last run).
+                      Recommend immediate review of the 3 critical-severity flags before next payment batch.
+                    </p>
+                  </div>
+
+                  {/* Key Observations & Insights */}
+                  <div className="mb-6">
+                    <h3 className="text-base font-bold text-slate-900 mb-4">Key Observations & Insights</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-white rounded-xl border border-slate-200 p-5">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center">
+                            <Sparkles className="w-3.5 h-3.5 text-violet-700" />
+                          </div>
+                          <p className="text-xs font-bold text-slate-700">Duplicate Detection</p>
+                        </div>
+                        <p className="text-sm text-slate-600 leading-relaxed mb-2">
+                          <strong className="text-violet-700">8 potential duplicates</strong> identified across 3 vendors. Highest confidence pair: INV-4521 vs INV-3102 (Acme Corp) with 96% field similarity.
+                        </p>
+                        <Badge className="bg-rose-50 text-rose-600 border-0 text-[10px] font-bold">High Priority</Badge>
                       </div>
-                      <p className="text-sm font-semibold text-slate-700">
-                        {clarifyPhase === 'checking_files' && 'Ira is checking if all required files are provided…'}
-                        {clarifyPhase === 'checking_mapping' && 'Ira is mapping files to workflow steps…'}
-                        {clarifyPhase === 'checking_columns' && 'Ira is mapping CSV columns to expected fields…'}
-                      </p>
-                      <p className="text-xs text-slate-400 mt-1">Powered by Claude Opus 4.5</p>
+                      <div className="bg-white rounded-xl border border-slate-200 p-5">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center">
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-700" />
+                          </div>
+                          <p className="text-xs font-bold text-slate-700">MTOW Weight Discrepancies</p>
+                        </div>
+                        <p className="text-sm text-slate-600 leading-relaxed mb-2">
+                          <strong className="text-violet-700">12 invoices</strong> show MTOW values exceeding the certified maximum by &gt;5%. Average overcharge per invoice: <strong className="text-violet-700">$3,847</strong>.
+                        </p>
+                        <Badge className="bg-amber-50 text-amber-600 border-0 text-[10px] font-bold">Medium Priority</Badge>
+                      </div>
+                      <div className="bg-white rounded-xl border border-slate-200 p-5">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center">
+                            <BarChart3 className="w-3.5 h-3.5 text-emerald-700" />
+                          </div>
+                          <p className="text-xs font-bold text-slate-700">Rate Compliance</p>
+                        </div>
+                        <p className="text-sm text-slate-600 leading-relaxed mb-2">
+                          <strong className="text-violet-700">97.3%</strong> of terminal charges align with the YYZ Rate Master. Remaining 2.7% used outdated rate tiers from Q2 2024.
+                        </p>
+                        <Badge className="bg-emerald-50 text-emerald-600 border-0 text-[10px] font-bold">On Track</Badge>
+                      </div>
+                      <div className="bg-white rounded-xl border border-slate-200 p-5">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center">
+                            <Search className="w-3.5 h-3.5 text-blue-700" />
+                          </div>
+                          <p className="text-xs font-bold text-slate-700">Vendor Concentration Risk</p>
+                        </div>
+                        <p className="text-sm text-slate-600 leading-relaxed mb-2">
+                          <strong className="text-violet-700">68%</strong> of flagged invoices originate from 2 vendors (Acme Corp, GlobalFlight). Suggests targeted vendor auditing may yield higher returns.
+                        </p>
+                        <Badge className="bg-blue-50 text-blue-600 border-0 text-[10px] font-bold">Insight</Badge>
+                      </div>
                     </div>
-                  )}
+                  </div>
 
-                  {/* Need more files */}
-                  {clarifyPhase === 'need_files' && (
-                    <div className="max-w-2xl mx-auto">
-                      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 mb-5">
-                        <div className="flex items-start gap-3">
-                          <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
-                            <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
-                          </div>
-                          <div>
-                            <p className="text-sm font-semibold text-amber-800 mb-1">Missing Files</p>
-                            <p className="text-xs text-amber-700 leading-relaxed">{clarifyMessage}</p>
-                          </div>
-                        </div>
+                  {/* Anomaly / Outlier Report */}
+                  <div className="mb-6">
+                    <h3 className="text-base font-bold text-slate-900 mb-4">Anomaly & Outlier Report</h3>
+                    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                      <div className="grid grid-cols-7 gap-3 px-5 py-2.5 bg-slate-50 border-b border-slate-200">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Invoice ID</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Type</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Vendor</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Expected</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Actual</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Deviation</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Severity</p>
                       </div>
-
-                      {fileMissing.length > 0 && (
-                        <div className="space-y-2 mb-5">
-                          {fileMissing.map((m, i) => (
-                            <div key={i} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-red-100">
-                              <div className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center flex-shrink-0">
-                                <svg className="w-4 h-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-semibold text-slate-700">{m.inputName}</p>
-                                <p className="text-xs text-slate-400">{m.reason}</p>
-                              </div>
-                            </div>
-                          ))}
+                      {[
+                        { id: 'INV-4521', type: 'Duplicate', vendor: 'Acme Corp', expected: '$12,400', actual: '$12,400', deviation: '100%', severity: 'critical' },
+                        { id: 'INV-3890', type: 'MTOW Outlier', vendor: 'GlobalFlight', expected: '156,000 kg', actual: '198,500 kg', deviation: '+27.2%', severity: 'critical' },
+                        { id: 'INV-2917', type: 'Rate Mismatch', vendor: 'AirConnect', expected: '$8,200', actual: '$11,340', deviation: '+38.3%', severity: 'critical' },
+                        { id: 'INV-5102', type: 'MTOW Outlier', vendor: 'Acme Corp', expected: '142,000 kg', actual: '165,800 kg', deviation: '+16.8%', severity: 'warning' },
+                        { id: 'INV-3204', type: 'Timing', vendor: 'SkyPartners', expected: '>48h gap', actual: '4h gap', deviation: 'Suspicious', severity: 'warning' },
+                        { id: 'INV-4788', type: 'Rate Mismatch', vendor: 'GlobalFlight', expected: '$6,150', actual: '$7,820', deviation: '+27.2%', severity: 'warning' },
+                        { id: 'INV-1056', type: 'MTOW Outlier', vendor: 'JetFreight', expected: '89,000 kg', actual: '94,200 kg', deviation: '+5.8%', severity: 'info' },
+                      ].map(row => (
+                        <div key={row.id} className="grid grid-cols-7 gap-3 px-5 py-3 border-b border-slate-100 last:border-0 items-center">
+                          <span className="text-sm font-medium text-slate-700">{row.id}</span>
+                          <Badge className={cn('text-[10px] font-bold border-0 w-fit',
+                            row.type === 'Duplicate' ? 'bg-rose-50 text-rose-600' :
+                            row.type === 'MTOW Outlier' ? 'bg-amber-50 text-amber-600' :
+                            row.type === 'Rate Mismatch' ? 'bg-violet-50 text-violet-600' :
+                            'bg-blue-50 text-blue-600'
+                          )}>{row.type}</Badge>
+                          <span className="text-sm text-slate-600">{row.vendor}</span>
+                          <span className="text-sm text-slate-500">{row.expected}</span>
+                          <span className="text-sm font-medium text-slate-800">{row.actual}</span>
+                          <span className={cn('text-sm font-semibold',
+                            row.severity === 'critical' ? 'text-rose-600' :
+                            row.severity === 'warning' ? 'text-amber-600' : 'text-blue-600'
+                          )}>{row.deviation}</span>
+                          <Badge className={cn('text-[10px] font-bold border-0 w-fit',
+                            row.severity === 'critical' ? 'bg-rose-50 text-rose-600' :
+                            row.severity === 'warning' ? 'bg-amber-50 text-amber-600' :
+                            'bg-blue-50 text-blue-600'
+                          )}>{row.severity.toUpperCase()}</Badge>
                         </div>
-                      )}
+                      ))}
+                    </div>
+                  </div>
 
-                      {fileMatches.length > 0 && (
-                        <div className="space-y-2 mb-5">
-                          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Matched Files</p>
-                          {fileMatches.map((m, i) => (
-                            <div key={i} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-emerald-100">
-                              <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center flex-shrink-0">
-                                <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                              </div>
-                              <div className="flex-1">
-                                <p className="text-sm font-medium text-slate-700">{m.fileName}</p>
-                                <p className="text-xs text-slate-400">→ {workflow?.inputs.find(i => i.id === m.inputId)?.name ?? m.inputId}</p>
-                              </div>
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${m.confidence === 'high' ? 'bg-emerald-100 text-emerald-700' : m.confidence === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>{m.confidence}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      <div className="flex items-center gap-3">
-                        <label className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-white border-2 border-dashed border-slate-300 rounded-xl cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/30 transition-colors">
-                          <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-                          <span className="text-sm font-medium text-slate-600">Upload missing files</span>
-                          <input ref={fileInputRef} type="file" multiple className="hidden"
-                            onChange={e => { if (e.target.files) handleFilesSelected(e.target.files); }} />
-                        </label>
-                        <button onClick={runFileSufficiencyCheck}
-                          className="px-4 py-3 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-colors">
-                          Re-check
+                  {/* Suggested Follow-ups */}
+                  <div className="mb-6">
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Suggested Follow-ups</p>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        'Show me only excess charges above $5,000',
+                        "Compare with last month's audit",
+                        'Export flagged items to Jira',
+                        'Explain the MTOW calculation logic',
+                      ].map(s => (
+                        <button key={s} className="text-xs bg-white border border-gray-200 rounded-full px-4 py-2 text-gray-600 hover:bg-violet-50 hover:text-violet-700 hover:border-violet-200 transition-all duration-150">
+                          {s}
                         </button>
-                      </div>
+                      ))}
                     </div>
-                  )}
+                  </div>
 
-                  {/* Need file mapping */}
-                  {clarifyPhase === 'need_mapping' && (
-                    <div className="max-w-2xl mx-auto">
-                      <div className="bg-blue-50 border border-blue-200 rounded-2xl p-5 mb-5">
-                        <div className="flex items-start gap-3">
-                          <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                            <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
-                          </div>
-                          <div>
-                            <p className="text-sm font-semibold text-blue-800 mb-1">Manual Mapping Needed</p>
-                            <p className="text-xs text-blue-700 leading-relaxed">{clarifyMessage}</p>
-                          </div>
+                  {/* Audit Report - Charts */}
+                  <div className="mb-6">
+                    <h3 className="text-base font-bold text-slate-900 mb-4">Audit Report</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Bar chart */}
+                      <div className="bg-white rounded-xl border border-slate-200 p-5">
+                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Charges by Airline</p>
+                        <div className="flex items-end gap-3 h-40">
+                          {BAR_CHART_DATA.map(d => (
+                            <div key={d.airline} className="flex-1 flex flex-col items-center gap-1">
+                              <div className={cn('w-full rounded-t-md transition-all', d.color)} style={{ height: `${d.value}%` }} />
+                              <span className="text-[9px] text-slate-400 text-center leading-tight">{d.airline}</span>
+                            </div>
+                          ))}
                         </div>
                       </div>
 
-                      {/* Confident mappings */}
-                      {fileMappings.filter(m => m.confidence !== 'low').length > 0 && (
-                        <div className="mb-5">
-                          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Auto-mapped</p>
+                      {/* Donut chart placeholder */}
+                      <div className="bg-white rounded-xl border border-slate-200 p-5">
+                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Flag Distribution</p>
+                        <div className="flex items-center gap-6">
+                          {/* Simple CSS donut */}
+                          <div className="relative w-28 h-28 flex-shrink-0">
+                            <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
+                              <circle cx="18" cy="18" r="14" fill="none" stroke="#f43f5e" strokeWidth="4" strokeDasharray="28.27 62.83" strokeDashoffset="0" />
+                              <circle cx="18" cy="18" r="14" fill="none" stroke="#f59e0b" strokeWidth="4" strokeDasharray="15.71 62.83" strokeDashoffset="-28.27" />
+                              <circle cx="18" cy="18" r="14" fill="none" stroke="#6366f1" strokeWidth="4" strokeDasharray="18.85 62.83" strokeDashoffset="-43.98" />
+                            </svg>
+                          </div>
                           <div className="space-y-2">
-                            {fileMappings.filter(m => m.confidence !== 'low').map((m, i) => (
-                              <div key={i} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-emerald-100">
-                                <svg className="w-4 h-4 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                                <span className="text-sm text-slate-700 font-medium">{m.fileName}</span>
-                                <svg className="w-4 h-3 text-slate-300" viewBox="0 0 16 10" fill="none"><path d="M0 5h12m-3-3.5L13 5l-4 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                                <span className="text-sm text-indigo-700 font-medium">{m.inputName}</span>
-                                <span className="text-[10px] text-slate-400 ml-auto">{m.reason}</span>
+                            {DONUT_DATA.map(d => (
+                              <div key={d.label} className="flex items-center gap-2">
+                                <div className={cn('w-3 h-3 rounded-sm', d.color)} />
+                                <span className="text-xs text-slate-600">{d.label}</span>
+                                <span className="text-xs font-bold text-slate-800 ml-auto">{d.pct}%</span>
                               </div>
                             ))}
                           </div>
                         </div>
-                      )}
-
-                      {/* Ambiguous — need user input */}
-                      {ambiguousFiles.length > 0 && (
-                        <div className="mb-5">
-                          <p className="text-xs font-bold text-amber-600 uppercase tracking-wider mb-2">Needs Your Input</p>
-                          <div className="space-y-3">
-                            {ambiguousFiles.map((a, i) => (
-                              <div key={i} className="p-4 bg-white rounded-xl border border-amber-200">
-                                <p className="text-sm font-semibold text-slate-700 mb-1">{a.fileName}</p>
-                                <p className="text-xs text-slate-400 mb-3">{a.reason}</p>
-                                <div className="flex flex-wrap gap-2">
-                                  {a.possibleInputs.map(inputId => {
-                                    const inp = workflow?.inputs.find(i => i.id === inputId);
-                                    const selected = manualMappings[a.fileName] === inputId;
-                                    return (
-                                      <button key={inputId}
-                                        onClick={() => setManualMappings(prev => ({ ...prev, [a.fileName]: inputId }))}
-                                        className={`px-3 py-2 text-xs font-medium rounded-lg border transition-all ${
-                                          selected
-                                            ? 'bg-indigo-600 text-white border-indigo-600'
-                                            : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-400'
-                                        }`}>
-                                        {inp?.name ?? inputId}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      <button onClick={confirmManualMappings}
-                        disabled={ambiguousFiles.some(a => !manualMappings[a.fileName])}
-                        className="w-full px-4 py-3 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-40 transition-colors">
-                        Confirm Mappings & Continue
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Need column mapping */}
-                  {clarifyPhase === 'need_columns' && (
-                    <div className="max-w-3xl mx-auto">
-                      <div className="bg-purple-50 border border-purple-200 rounded-2xl p-5 mb-5">
-                        <div className="flex items-start gap-3">
-                          <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
-                            <svg className="w-5 h-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>
-                          </div>
-                          <div>
-                            <p className="text-sm font-semibold text-purple-800 mb-1">Column Mapping Review</p>
-                            <p className="text-xs text-purple-700 leading-relaxed">{clarifyMessage}</p>
-                          </div>
-                        </div>
                       </div>
-
-                      {/* Auto-mapped columns by step */}
-                      {stepColMappings.map((scm) => {
-                        const stepCfg = STC[(workflow?.steps.find(s => s.id === scm.stepId)?.type ?? 'analyze') as StepType] ?? STC.analyze;
-                        return (
-                          <div key={scm.stepId} className="mb-5 bg-white rounded-2xl border border-slate-200 overflow-hidden">
-                            <div className={`px-5 py-3 ${stepCfg.bg} border-b border-slate-100`}>
-                              <p className={`text-sm font-bold ${stepCfg.text}`}>{scm.stepName}</p>
-                            </div>
-                            <div className="p-4 space-y-2">
-                              {scm.mappings.map((cm, j) => {
-                                const mapped = cm.confidence !== 'unmapped' && cm.actualColumn;
-                                const key = `${scm.stepId}:${cm.expectedFrom}`;
-                                return (
-                                  <div key={j} className={`flex items-center gap-3 p-3 rounded-xl border ${mapped ? 'border-emerald-100 bg-emerald-50/30' : 'border-amber-200 bg-amber-50/30'}`}>
-                                    <span className="px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg text-[11px] font-mono font-semibold flex-shrink-0">{cm.expectedFrom}</span>
-                                    <svg className="w-5 h-3 text-slate-300 flex-shrink-0" viewBox="0 0 20 10" fill="none"><path d="M0 5h16m-3-3.5L17 5l-4 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                                    {mapped ? (
-                                      <span className="px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-[11px] font-mono font-semibold">{cm.actualColumn}</span>
-                                    ) : (
-                                      <select
-                                        value={manualColMappings[key] ?? ''}
-                                        onChange={e => setManualColMappings(prev => ({ ...prev, [key]: e.target.value }))}
-                                        className="text-xs border border-amber-300 rounded-lg px-2 py-1.5 bg-white text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:outline-none min-w-[150px]"
-                                      >
-                                        <option value="">Select column…</option>
-                                        {uploadedFiles.flatMap(f => f.headers ?? []).filter((h, i, arr) => arr.indexOf(h) === i).map(h => (
-                                          <option key={h} value={h}>{h}</option>
-                                        ))}
-                                      </select>
-                                    )}
-                                    <span className="text-[10px] text-slate-400 flex-1 truncate">{cm.suggestion ?? cm.expectedTo}</span>
-                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                                      cm.confidence === 'high' ? 'bg-emerald-100 text-emerald-700' :
-                                      cm.confidence === 'medium' ? 'bg-amber-100 text-amber-700' :
-                                      cm.confidence === 'low' ? 'bg-orange-100 text-orange-700' :
-                                      'bg-red-100 text-red-700'
-                                    }`}>{cm.confidence}</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })}
-
-                      <button onClick={confirmManualColumns}
-                        className="w-full px-4 py-3 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-colors">
-                        Confirm Column Mappings
-                      </button>
                     </div>
-                  )}
+                  </div>
 
-                  {/* Ready */}
-                  {clarifyPhase === 'ready' && (
-                    <div className="flex flex-col items-center py-12">
-                      <div className="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mb-5 shadow-lg ring-8 ring-emerald-50">
-                        <svg className="w-10 h-10 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                      </div>
-                      <h3 className="text-xl font-bold text-slate-900 mb-2">Input Ready!</h3>
-                      <p className="text-sm text-slate-500 mb-6 text-center max-w-md">
-                        All files are verified, mappings confirmed, and columns aligned. You can now run the workflow or save it.
-                      </p>
+                  {/* Full Audit Data Table */}
+                  <div>
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-base font-bold text-slate-900">Full Audit Data</h3>
                       <div className="flex items-center gap-3">
-                        <button onClick={handleSave}
-                          className="px-5 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-xl hover:bg-slate-800 transition-colors">
-                          Save Workflow
-                        </button>
-                        <button onClick={() => { setClarifyPhase('idle'); }}
-                          className="px-5 py-2.5 bg-white text-slate-700 text-sm font-semibold rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors">
-                          Back to Config
-                        </button>
+                        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5">
+                          <Search className="w-3.5 h-3.5 text-slate-400" />
+                          <input type="text" placeholder="Search invoices..." className="text-xs bg-transparent outline-none w-36" />
+                        </div>
+                        <Button variant="outline" size="sm" className="text-xs">
+                          <Filter className="w-3.5 h-3.5 mr-1.5" /> Filter
+                        </Button>
+                        <span className="text-xs text-slate-400">Showing 5 of 1,129 records</span>
                       </div>
                     </div>
-                  )}
-                </div>
 
-              ) : (
-                /* ── Default: Upload + Input Configuration ── */
-                <div>
-                  {/* Upload Section */}
-                  {workflow && (
-                    <div className="mb-6">
-                      <div className="flex items-center justify-between mb-4">
-                        <div>
-                          <h3 className="text-base font-semibold text-slate-800">Upload Files & Verify</h3>
-                          <p className="text-xs text-slate-400 mt-0.5">Upload your data files and let Ira verify everything</p>
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                      <div className="grid grid-cols-6 gap-4 px-5 py-2.5 bg-gray-50 border-b border-gray-100">
+                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Invoice ID</p>
+                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Date</p>
+                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Vendor</p>
+                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Amount</p>
+                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Status</p>
+                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Reason</p>
+                      </div>
+                      {AUDIT_TABLE_DATA.map(row => (
+                        <div key={row.id} className="grid grid-cols-6 gap-4 px-5 py-3 border-b border-gray-100 last:border-0 items-center">
+                          <span className="text-sm font-medium text-slate-700">{row.id}</span>
+                          <span className="text-sm text-slate-500">{row.date}</span>
+                          <span className="text-sm text-slate-700">{row.vendor}</span>
+                          <span className="text-sm font-medium text-slate-800">{row.amount}</span>
+                          <Badge className={cn('text-[10px] font-bold border-0 w-fit',
+                            row.status === 'FLAGGED' ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'
+                          )}>
+                            {row.status}
+                          </Badge>
+                          <span className="text-sm text-slate-500">{row.reason}</span>
                         </div>
-                        {uploadedFiles.length > 0 && (
-                          <button onClick={startClarification}
-                            className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-colors shadow-sm">
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                            Verify with Ira
-                          </button>
-                        )}
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* ======== Step 1: Write prompt ======== */}
+                  {activeFlowStep === 1 && (
+                    <div className="flex flex-col items-center justify-center py-20">
+                      <Pencil className="w-12 h-12 text-slate-300 mb-4" strokeWidth={1.5} />
+                      <h3 className="text-lg font-bold text-slate-900 mb-2">Describe your workflow</h3>
+                      <p className="text-sm text-slate-500 mb-4 text-center max-w-md">Use the chat on the left to describe what you need, and Ira will build the workflow for you.</p>
+                    </div>
+                  )}
+
+                  {/* ======== Step 2: Upload Files ======== */}
+                  {activeFlowStep === 2 && workflow && (
+                    <div>
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center">
+                          <Upload className="w-5 h-5 text-blue-600" />
+                        </div>
+                        <div>
+                          <h2 className="text-lg font-bold text-slate-900">Upload Data Files</h2>
+                          <p className="text-sm text-slate-500">Upload the files required for this workflow, then verify with Ira</p>
+                        </div>
+                      </div>
+
+                      {/* Expected inputs */}
+                      <div className="mt-6 mb-6">
+                        <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 block">Expected Inputs</Label>
+                        <div className="grid grid-cols-2 gap-3">
+                          {workflow.inputs.map(inp => (
+                            <Card key={inp.id} className="rounded-xl border-slate-200 py-0">
+                              <CardContent className="p-4 flex items-center gap-3">
+                                <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0', FILE_BG[inp.type], FILE_TEXT[inp.type])}>
+                                  <FileIcon type={inp.type} />
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-semibold text-slate-800 truncate">{inp.name}</p>
+                                  <p className="text-xs text-slate-400">{inp.type.toUpperCase()} &middot; {inp.required ? 'Required' : 'Optional'}</p>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          ))}
+                        </div>
                       </div>
 
                       {/* Drop zone */}
                       <label
-                        className="flex flex-col items-center justify-center p-6 bg-white border-2 border-dashed border-slate-300 rounded-2xl cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/20 transition-all mb-4"
-                        onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('border-indigo-400', 'bg-indigo-50/30'); }}
-                        onDragLeave={e => { e.currentTarget.classList.remove('border-indigo-400', 'bg-indigo-50/30'); }}
-                        onDrop={e => { e.preventDefault(); e.currentTarget.classList.remove('border-indigo-400', 'bg-indigo-50/30'); if (e.dataTransfer.files) handleFilesSelected(e.dataTransfer.files); }}
+                        className="flex flex-col items-center justify-center p-10 bg-white border-2 border-dashed border-slate-300 rounded-2xl cursor-pointer hover:border-violet-400 hover:bg-violet-50/20 transition-all mb-4"
+                        onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('border-violet-400', 'bg-violet-50/30'); }}
+                        onDragLeave={e => { e.currentTarget.classList.remove('border-violet-400', 'bg-violet-50/30'); }}
+                        onDrop={e => { e.preventDefault(); e.currentTarget.classList.remove('border-violet-400', 'bg-violet-50/30'); if (e.dataTransfer.files) handleFilesSelected(e.dataTransfer.files); }}
                       >
-                        <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mb-3">
-                          <svg className="w-6 h-6 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                        </div>
+                        <Upload className="w-10 h-10 text-slate-300 mb-3" strokeWidth={1.5} />
                         <p className="text-sm font-medium text-slate-600">Drop files here or click to upload</p>
-                        <p className="text-xs text-slate-400 mt-1">CSV, PDF, images — any data files for this workflow</p>
-                        <input type="file" multiple className="hidden"
-                          onChange={e => { if (e.target.files) handleFilesSelected(e.target.files); }} />
+                        <p className="text-xs text-slate-400 mt-1">CSV, PDF, images -- any data files for this workflow</p>
+                        <input type="file" multiple className="hidden" onChange={e => { if (e.target.files) handleFilesSelected(e.target.files); }} />
                       </label>
 
-                      {/* Uploaded file list */}
+                      {/* Uploaded files as pills */}
                       {uploadedFiles.length > 0 && (
-                        <div className="space-y-2">
+                        <div className="flex flex-wrap gap-2 mb-4">
                           {uploadedFiles.map((uf, i) => (
-                            <div key={i} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-slate-200">
-                              <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                                uf.name.endsWith('.csv') ? 'bg-emerald-100 text-emerald-600' :
-                                uf.name.endsWith('.pdf') ? 'bg-blue-100 text-blue-600' :
-                                'bg-purple-100 text-purple-600'
-                              }`}>
-                                <FileIcon type={uf.name.endsWith('.csv') ? 'csv' : uf.name.endsWith('.pdf') ? 'pdf' : 'image'} />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-slate-700 truncate">{uf.name}</p>
-                                <p className="text-xs text-slate-400">
-                                  {uf.headers ? `${uf.headers.length} columns · ${uf.rowCount ?? 0} rows` : `${(uf.file.size / 1024).toFixed(1)} KB`}
-                                </p>
-                              </div>
-                              {uf.headers && (
-                                <div className="flex flex-wrap gap-1 max-w-[200px]">
-                                  {uf.headers.slice(0, 4).map((h, j) => (
-                                    <span key={j} className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded font-mono">{h}</span>
-                                  ))}
-                                  {uf.headers.length > 4 && <span className="text-[10px] text-slate-400">+{uf.headers.length - 4}</span>}
-                                </div>
-                              )}
-                              <button onClick={() => setUploadedFiles(prev => prev.filter((_, j) => j !== i))}
-                                className="p-1 text-slate-300 hover:text-red-400 transition-colors">
-                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                            <div key={i} className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2">
+                              <Plus className="w-3.5 h-3.5 text-slate-400" />
+                              <span className="text-xs font-medium text-slate-700">{uf.name}</span>
+                              <button onClick={() => setUploadedFiles(prev => prev.filter((_, j) => j !== i))} className="ml-1">
+                                <X className="w-3 h-3 text-slate-400 hover:text-red-500" />
                               </button>
                             </div>
                           ))}
                         </div>
                       )}
+
+                      <Button
+                        onClick={startClarification}
+                        disabled={uploadedFiles.length === 0}
+                        className={cn(
+                          'w-full rounded-2xl h-14 text-base font-semibold mt-4 transition-all',
+                          uploadedFiles.length > 0
+                            ? 'bg-[#26064A] hover:bg-[#3a0d6e] text-white'
+                            : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                        )}
+                      >
+                        <Sparkles className="w-5 h-5 mr-2" /> Verify with Ira
+                      </Button>
+
+                      {/* Loading state */}
+                      {isPhaseLoading(clarifyPhase) && (
+                        <div className="flex flex-col items-center py-8">
+                          <Loader2 className="w-8 h-8 text-violet-600 animate-spin mb-3" />
+                          <p className="text-sm font-semibold text-slate-700">
+                            {clarifyPhase === 'checking_files' && 'Checking file sufficiency...'}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Need files */}
+                      {clarifyPhase === 'need_files' && (
+                        <div className="mt-4">
+                          <Alert className="border-amber-200 bg-amber-50">
+                            <AlertTriangle className="w-4 h-4 text-amber-600" />
+                            <AlertTitle className="text-amber-800">Missing Files</AlertTitle>
+                            <AlertDescription className="text-amber-700 text-xs">{clarifyMessage}</AlertDescription>
+                          </Alert>
+                          {fileMissing.map((m, i) => (
+                            <div key={i} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-red-100 mt-2">
+                              <X className="w-4 h-4 text-red-400" />
+                              <div><p className="text-sm font-semibold text-slate-700">{m.inputName}</p><p className="text-xs text-slate-400">{m.reason}</p></div>
+                            </div>
+                          ))}
+                          <Button onClick={runFileSufficiencyCheck} className="mt-3 bg-violet-700 hover:bg-violet-800 text-white">Re-check</Button>
+                        </div>
+                      )}
                     </div>
                   )}
 
-                  {/* Input Configuration */}
-                  <div className="flex items-center justify-between mb-5">
+                  {/* ======== Step 3: Map Data (combined file mapping + column alignment) ======== */}
+                  {activeFlowStep === 3 && (
                     <div>
-                      <h3 className="text-base font-semibold text-slate-800">Input Configuration</h3>
-                      <p className="text-xs text-slate-400 mt-0.5">{workflow?.inputs.length ?? 0} data source{(workflow?.inputs.length ?? 0) !== 1 ? 's' : ''} configured</p>
-                    </div>
-                    <button className="inline-flex items-center gap-1.5 bg-slate-900 text-white text-sm font-medium px-3.5 py-2 rounded-xl hover:bg-slate-800 transition-colors shadow-sm">
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-                      Add Input
-                    </button>
-                  </div>
-
-                  {!workflow || workflow.inputs.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-20 text-center">
-                      <div className="w-16 h-16 rounded-2xl bg-white border-2 border-dashed border-slate-200 flex items-center justify-center mb-4">
-                        <svg className="w-7 h-7 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                      </div>
-                      <p className="text-sm font-medium text-slate-500">No inputs yet</p>
-                      <p className="text-xs text-slate-400 mt-1">Describe your workflow in the chat to auto-generate inputs</p>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                      {workflow.inputs.map((inp, idx) => (
-                        <div key={inp.id} className="bg-white rounded-2xl border border-slate-200 hover:border-slate-300 hover:shadow-md transition-all p-5">
-                          <div className="flex items-start justify-between mb-4">
-                            <div className="flex items-center gap-3">
-                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${FILE_BG[inp.type]} ${FILE_TEXT[inp.type]}`}>
-                                <FileIcon type={inp.type} />
-                              </div>
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs text-slate-400 font-medium">Input {idx + 1}</span>
-                                  {inp.required && <span className="text-[10px] bg-rose-50 text-rose-500 border border-rose-100 px-1.5 py-0.5 rounded font-semibold">Required</span>}
-                                </div>
-                              </div>
-                            </div>
-                            <button className="p-1 text-slate-300 hover:text-red-400 transition-colors rounded-lg">
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                            </button>
+                      {/* Header */}
+                      <div className="flex items-center justify-between mb-6">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
+                            <Link2 className="w-5 h-5 text-emerald-600" />
                           </div>
-                          <div className="space-y-3">
-                            <div>
-                              <label className="text-xs font-semibold text-slate-500 block mb-1.5">Field Name</label>
-                              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5">
-                                <svg className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>
-                                <span className="text-sm font-semibold text-slate-800">{inp.name}</span>
-                              </div>
-                            </div>
-                            <div>
-                              <label className="text-xs font-semibold text-slate-500 block mb-1.5">Type</label>
-                              <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5">
-                                <div className="flex items-center gap-2">
-                                  <div className={`w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 ${FILE_BG[inp.type]} ${FILE_TEXT[inp.type]}`}>
-                                    <FileIcon type={inp.type} />
-                                  </div>
-                                  <span className="text-sm text-slate-700 font-medium">
-                                    {inp.type === 'csv' ? 'CSV File' : inp.type === 'pdf' ? 'PDF Document' : inp.type === 'image' ? 'Image File' : 'SQL Database'}
-                                  </span>
-                                </div>
-                                <svg className="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-                              </div>
-                            </div>
-                            <div>
-                              <label className="text-xs font-semibold text-slate-500 block mb-1.5">Description</label>
-                              <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-600 leading-relaxed">{inp.description}</div>
-                            </div>
-                            <div className="flex items-center justify-between pt-1">
-                              <label className="text-xs font-semibold text-slate-500">Required</label>
-                              <div className={`relative w-11 h-6 rounded-full flex-shrink-0 transition-colors ${inp.required ? 'bg-indigo-600' : 'bg-slate-200'}`}>
-                                <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${inp.required ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                              </div>
-                            </div>
+                          <div>
+                            <h2 className="text-lg font-bold text-slate-900">Data Mapping</h2>
+                            <p className="text-sm text-slate-500">Map files and align columns in one unified step</p>
                           </div>
                         </div>
-                      ))}
+                        <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium text-xs gap-1.5">
+                          <Sparkles className="w-3 h-3" />
+                          AI SUGGESTED MAPPINGS
+                        </Badge>
+                      </div>
+
+                      {isPhaseLoading(clarifyPhase) && (
+                        <div className="flex flex-col items-center py-12">
+                          <Loader2 className="w-8 h-8 text-emerald-500 animate-spin mb-3" />
+                          <p className="text-sm text-slate-600">Mapping files and columns...</p>
+                        </div>
+                      )}
+
+                      {(clarifyPhase === 'need_mapping' || clarifyPhase === 'need_columns' || (clarifyPhase !== 'checking_mapping' && clarifyPhase !== 'checking_columns' && workflow)) && (
+                        <div>
+                          {/* Combined mapping cards for each expected input */}
+                          <div className="space-y-6 mb-6">
+                            {(workflow?.inputs ?? []).map((inp, inputIdx) => {
+                              const apiMatch = fileMappings.find(fm => fm.inputName === inp.name || fm.inputId === inp.id);
+                              const mappedFileName = apiMatch?.fileName ?? DEMO_FILES[inp.name]?.file ?? inp.name.toLowerCase().replace(/[^a-z0-9]+/g, '_') + '_sample.csv';
+                              const confidence = apiMatch?.confidence ?? DEMO_FILES[inp.name]?.confidence ?? 'high';
+                              const rawMatchPct = confidence === 'high' ? 90 + (inputIdx * 3 % 10) : 65 + (inputIdx * 7 % 25);
+                              const matchDisplay = rawMatchPct >= 90 ? { pct: 100, label: '100% MATCH', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+                                : rawMatchPct >= 70 ? { pct: rawMatchPct, label: `${rawMatchPct}% MATCH`, bg: 'bg-amber-50 text-amber-700 border-amber-200' }
+                                : { pct: rawMatchPct, label: `${rawMatchPct}% MATCH`, bg: 'bg-red-50 text-red-600 border-red-200' };
+                              const columns = inp.columns ?? ['col1', 'col2', 'col3', 'col4'];
+                              const visibleCols = columns.slice(0, 4);
+
+                              const expanded = expandedSchemas[inp.id] ?? (inputIdx === 0);
+
+                              return (
+                                <div key={inp.id} className="bg-white rounded-2xl border border-slate-200">
+                                  {/* A) File Mapping header — clickable to expand/collapse */}
+                                  <div
+                                    className="p-5 cursor-pointer hover:bg-slate-50/50 transition-colors"
+                                    onClick={() => toggleSchemaExpanded(inp.id)}
+                                  >
+                                    <div className="flex items-start justify-between gap-6">
+                                      {/* Left: Expected Schema */}
+                                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                                        <div className={cn(
+                                          'w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 transition-transform',
+                                          expanded ? 'rotate-0' : '-rotate-90'
+                                        )}>
+                                          <ChevronDown className="w-4 h-4 text-slate-400" />
+                                        </div>
+                                        <div>
+                                          <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">Expected Schema</Label>
+                                          <p className="text-sm font-semibold text-slate-800">{inp.name}</p>
+                                          <p className="text-xs text-slate-400 mt-0.5">{inp.description}</p>
+                                        </div>
+                                      </div>
+
+                                      {/* Right: Mapped Source */}
+                                      <div className="flex-1 min-w-0 text-right" onClick={e => e.stopPropagation()}>
+                                        <div className="flex items-center justify-end gap-2 mb-1.5">
+                                          <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Mapped Source</Label>
+                                          <Badge className={cn('border text-[10px] font-bold px-1.5 py-0', matchDisplay.bg)}>
+                                            <Plus className="w-2.5 h-2.5 mr-0.5" />
+                                            {matchDisplay.label}
+                                          </Badge>
+                                        </div>
+                                        <div className="flex items-center justify-end gap-2">
+                                          <span className="inline-flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 font-medium truncate">
+                                            <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                            {mappedFileName}
+                                          </span>
+                                          <button className="text-xs text-violet-700 hover:text-violet-800 font-medium whitespace-nowrap">Change</button>
+                                          <button className="text-xs text-slate-400 hover:text-slate-600 font-medium whitespace-nowrap">
+                                            <RefreshCw className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+                                      </div>
+
+                                      {/* Status indicator */}
+                                      {rawMatchPct >= 90 ? (
+                                        <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                                          <Check className="w-4 h-4 text-emerald-600" />
+                                        </div>
+                                      ) : rawMatchPct >= 70 ? (
+                                        <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+                                          <AlertTriangle className="w-4 h-4 text-amber-600" />
+                                        </div>
+                                      ) : (
+                                        <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+                                          <X className="w-4 h-4 text-red-500" />
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* B) Inline Column Alignment — collapsible */}
+                                  {expanded && <div className="p-5 border-t border-slate-100">
+                                    <div className="flex items-center justify-between mb-3">
+                                      <div className="flex items-center gap-2">
+                                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Column Alignment</p>
+                                      </div>
+                                      <span className="text-xs text-slate-500">{visibleCols.length} / {visibleCols.length} Fields</span>
+                                    </div>
+
+                                    {/* Column table */}
+                                    <div className="bg-slate-50 rounded-xl border border-slate-100">
+                                      <div className="grid grid-cols-4 gap-4 px-4 py-2 border-b border-slate-200">
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Source Column</p>
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">Mapping</p>
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Target Schema</p>
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Confidence</p>
+                                      </div>
+                                      {visibleCols.map((col, j) => {
+                                        const shortCode = col.substring(0, 2).toUpperCase();
+                                        const targetName = col.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()).replace(/ /g, '');
+                                        const targetType = col.includes('date') ? 'TIMESTAMP' : col.includes('amount') || col.includes('mtow') || col.includes('rate') ? 'DECIMAL' : 'STRING';
+                                        const confPct = j === 0 ? 96 : j === 1 ? 78 : j === 2 ? 93 : 62 + (j * 11 % 30);
+                                        const colMatchDisplay = confPct >= 90 ? { label: '100% MATCH', bg: 'bg-emerald-50 text-emerald-600 border-emerald-200' }
+                                          : confPct >= 70 ? { label: `${confPct}% MATCH`, bg: 'bg-amber-50 text-amber-600 border-amber-200' }
+                                          : { label: `${confPct}% MATCH`, bg: 'bg-red-50 text-red-500 border-red-200' };
+                                        const key = `${inp.id}:${col}`;
+
+                                        // Parameter breakdown: confidence = (name_sim × 0.35) + (type_compat × 0.25) + (stat_profile × 0.20) + (semantic_sim × 0.20)
+                                        const nameSimScore = confPct >= 90 ? 90 + (j * 3 % 10) : confPct >= 70 ? 55 + (j * 13 % 25) : 25 + (j * 9 % 20);
+                                        const typeCompatScore = confPct >= 90 ? 92 + (j * 5 % 8) : confPct >= 70 ? 85 + (j * 7 % 12) : 45 + (j * 11 % 25);
+                                        const statProfileScore = confPct >= 90 ? 88 + (j * 7 % 12) : confPct >= 70 ? 70 + (j * 9 % 18) : 35 + (j * 7 % 20);
+                                        const semanticSimScore = confPct >= 90 ? 85 + (j * 9 % 15) : confPct >= 70 ? 60 + (j * 11 % 20) : 20 + (j * 13 % 25);
+                                        const paramBars = [
+                                          { label: 'Name Similarity', score: nameSimScore, weight: '35%', desc: 'Fuzzy string matching & token comparison' },
+                                          { label: 'Type Compatibility', score: typeCompatScore, weight: '25%', desc: 'Data type inference & format alignment' },
+                                          { label: 'Statistical Profile', score: statProfileScore, weight: '20%', desc: 'Value distribution, cardinality & null ratio' },
+                                          { label: 'Semantic Similarity', score: semanticSimScore, weight: '20%', desc: 'Embedding-based meaning comparison' },
+                                        ];
+                                        const justification = confPct >= 90
+                                          ? `Strong match — field names share common terminology and data patterns are consistent across sample rows.`
+                                          : confPct >= 70
+                                          ? `Partial match — field names share some overlap but data patterns show divergence. Review recommended.`
+                                          : `Low confidence — name similarity is weak and patterns are inconsistent. Manual selection required.`;
+
+                                        return (
+                                          <div key={j} className="grid grid-cols-4 gap-4 px-4 py-3 border-b border-slate-100 last:border-0 items-center">
+                                            {/* Source column */}
+                                            <div className="flex items-center gap-2">
+                                              <span className="w-6 h-6 rounded-md bg-slate-200 flex items-center justify-center text-[9px] font-bold text-slate-500 flex-shrink-0">{shortCode}</span>
+                                              <span className="text-xs font-medium text-slate-700">{col}</span>
+                                            </div>
+
+                                            {/* Arrow */}
+                                            <div className="flex justify-center">
+                                              <ArrowRight className="w-3.5 h-3.5 text-slate-300" />
+                                            </div>
+
+                                            {/* Target schema (clickable dropdown) */}
+                                            <div>
+                                              <Select
+                                                value={confPct < 70 && !manualColMappings[key] ? '' : (manualColMappings[key] ?? targetName)}
+                                                onValueChange={v => setManualColMappings(prev => ({ ...prev, [key]: v }))}
+                                              >
+                                                <SelectTrigger className="h-auto border-0 shadow-none p-0 gap-1 focus:ring-0 [&>svg]:text-slate-400">
+                                                  <div className="text-left">
+                                                    {confPct < 70 && !manualColMappings[key] ? (
+                                                      <p className="text-xs font-medium text-red-400 italic">Select mapping...</p>
+                                                    ) : (
+                                                      <>
+                                                        <p className="text-xs font-semibold text-violet-700">{manualColMappings[key] ?? targetName}</p>
+                                                        <p className="text-[9px] text-slate-400 uppercase">{targetType}</p>
+                                                      </>
+                                                    )}
+                                                  </div>
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  <SelectItem value={targetName}>{targetName}</SelectItem>
+                                                  {uploadedFiles.flatMap(f => f.headers ?? []).filter((h, i, arr) => arr.indexOf(h) === i && h !== targetName).map(h => (
+                                                    <SelectItem key={h} value={h}>{h}</SelectItem>
+                                                  ))}
+                                                  {uploadedFiles.length === 0 && (
+                                                    <SelectItem value="__other">Other...</SelectItem>
+                                                  )}
+                                                </SelectContent>
+                                              </Select>
+                                            </div>
+
+                                            {/* Confidence */}
+                                            <div className="flex items-center justify-end gap-1.5 relative">
+                                              <Badge className={cn('border text-[10px] font-bold px-2 py-0', colMatchDisplay.bg)}>
+                                                {colMatchDisplay.label}
+                                              </Badge>
+                                              <button
+                                                onClick={e => { e.stopPropagation(); setOpenJustification(openJustification === key ? null : key); }}
+                                              >
+                                                <Info className={cn('w-3.5 h-3.5 cursor-pointer transition-colors', openJustification === key ? 'text-violet-600' : 'text-slate-300 hover:text-slate-500')} />
+                                              </button>
+                                              {openJustification === key && (<>
+                                                {/* Backdrop to close on outside click */}
+                                                <div className="fixed inset-0 z-[99]" onClick={e => { e.stopPropagation(); setOpenJustification(null); }} />
+                                                <div className="absolute right-0 top-7 z-[100] w-80 bg-white rounded-xl border border-slate-200 shadow-2xl p-4" onClick={e => e.stopPropagation()}>
+                                                  <div className="flex items-center justify-between mb-3">
+                                                    <div className="flex items-center gap-1.5">
+                                                      <Sparkles className="w-3 h-3 text-violet-600" />
+                                                      <p className="text-[10px] font-bold text-violet-700 uppercase tracking-wider">AI Justification</p>
+                                                    </div>
+                                                    <button onClick={() => setOpenJustification(null)} className="text-slate-400 hover:text-slate-600">
+                                                      <X className="w-3 h-3" />
+                                                    </button>
+                                                  </div>
+
+                                                  {/* Parameter breakdown bars */}
+                                                  <div className="space-y-3 mb-3">
+                                                    {paramBars.map(p => (
+                                                      <div key={p.label}>
+                                                        <div className="flex items-center justify-between mb-1">
+                                                          <div className="flex items-center gap-1.5">
+                                                            <span className="text-xs font-semibold text-slate-700">{p.label}</span>
+                                                            <span className="text-[9px] text-slate-400">×{p.weight}</span>
+                                                          </div>
+                                                          <span className={cn('text-xs font-bold',
+                                                            p.score >= 90 ? 'text-emerald-600' : p.score >= 70 ? 'text-amber-600' : 'text-red-500'
+                                                          )}>{p.score}%</span>
+                                                        </div>
+                                                        <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                                                          <div
+                                                            className={cn('h-full rounded-full transition-all',
+                                                              p.score >= 90 ? 'bg-[#6A12CD]' : p.score >= 70 ? 'bg-amber-500' : 'bg-red-500'
+                                                            )}
+                                                            style={{ width: `${p.score}%` }}
+                                                          />
+                                                        </div>
+                                                        <p className="text-[9px] text-slate-400 mt-0.5">{p.desc}</p>
+                                                      </div>
+                                                    ))}
+                                                  </div>
+
+                                                  {/* Summary */}
+                                                  <div className="pt-3 border-t border-slate-100">
+                                                    <p className="text-[11px] text-slate-500 leading-relaxed mb-2">{justification}</p>
+                                                    <div className="flex items-center gap-2">
+                                                      <Badge className={cn('border text-[9px] font-bold px-1.5 py-0', colMatchDisplay.bg)}>
+                                                        Overall: {confPct}%
+                                                      </Badge>
+                                                      <span className="text-[10px] text-slate-400">{col} → {targetName}</span>
+                                                    </div>
+                                                  </div>
+                                                </div>
+                                              </>)}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>}
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* Ambiguous Files */}
+                          {ambiguousFiles.length > 0 && (
+                            <div className="space-y-4 mb-6">
+                              {ambiguousFiles.map((a, i) => (
+                                <div key={i} className="bg-amber-50/60 rounded-2xl border border-amber-200 p-5">
+                                  <div className="flex items-start justify-between gap-6">
+                                    <div className="flex-1 min-w-0">
+                                      <Label className="text-[10px] font-bold text-amber-500 uppercase tracking-widest mb-1.5 block">Needs Your Input</Label>
+                                      <p className="text-sm font-semibold text-slate-800">{a.fileName}</p>
+                                      <p className="text-xs text-slate-400 mt-0.5">{a.reason}</p>
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block text-right">Select Target</Label>
+                                      <div className="flex flex-wrap gap-2 justify-end">
+                                        {a.possibleInputs.map(inputId => (
+                                          <Button key={inputId} variant={manualMappings[a.fileName] === inputId ? 'default' : 'outline'} size="sm"
+                                            className={cn('text-xs rounded-lg', manualMappings[a.fileName] === inputId && 'bg-violet-700 hover:bg-violet-800')}
+                                            onClick={() => setManualMappings(prev => ({ ...prev, [a.fileName]: inputId }))}>
+                                            {workflow?.inputs.find(inp => inp.id === inputId)?.name ?? inputId}
+                                          </Button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Footer */}
+                          <div className="border-t border-slate-200 pt-4">
+                            <p className="flex items-center gap-2 text-xs text-slate-400 mb-4">
+                              <AlertTriangle className="w-3.5 h-3.5 text-slate-300" />
+                              Review each mapping carefully before proceeding to final review
+                            </p>
+                            <Button onClick={() => {
+                              if (clarifyPhase === 'need_mapping') {
+                                confirmManualMappings();
+                              } else if (clarifyPhase === 'need_columns') {
+                                confirmManualColumns();
+                              } else {
+                                confirmManualColumns();
+                              }
+                            }}
+                              disabled={clarifyPhase === 'need_mapping' && ambiguousFiles.some(a => !manualMappings[a.fileName])}
+                              className="bg-[#26064A] hover:bg-[#3a0d6e] text-white w-full rounded-xl h-11 text-sm font-semibold">
+                              Confirm & Proceed
+                              <ChevronRight className="w-4 h-4 ml-2" />
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
+
+                  {/* ======== Step 4: Review & Execute ======== */}
+                  {activeFlowStep === 4 && (
+                    <div>
+                      {/* Header */}
+                      <div className="flex items-center justify-between mb-6">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-violet-100 flex items-center justify-center">
+                            <Play className="w-5 h-5 text-violet-700" />
+                          </div>
+                          <div>
+                            <h2 className="text-lg font-bold text-slate-900">Review & Execute</h2>
+                            <p className="text-sm text-slate-500">Review the query execution plan and data lineage</p>
+                          </div>
+                        </div>
+                        <Button onClick={handleRunWorkflow} disabled={isExecuting || showOutput}
+                          className="bg-violet-700 hover:bg-violet-800 text-white px-6">
+                          {isExecuting ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Running...</> : <><Play className="w-4 h-4 mr-2" /> Run Workflow</>}
+                        </Button>
+                      </div>
+
+                      {/* Workflow steps as expanded cards */}
+                      <div className="space-y-4">
+                        {workflow?.steps.map((step, idx) => {
+                          const cfg = STC[step.type] ?? STC.analyze;
+                          const badge = STEP_BADGE[step.type] ?? STEP_BADGE.analyze;
+                          const inputNames = (step.dataFiles ?? []).map(df => {
+                            const found = workflow.inputs.find(inp => inp.id === df);
+                            return found?.name ?? df;
+                          });
+
+                          return (
+                            <div key={step.id} className="bg-white rounded-xl border border-slate-200 p-5">
+                              <div className="flex items-start gap-4">
+                                <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold text-white bg-[#26064A]">
+                                  {idx + 1}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <h4 className="text-sm font-bold text-slate-900">{step.name}</h4>
+                                    <Badge className={cn('text-[9px] font-bold border-0 uppercase', badge.bg, badge.text)}>
+                                      {badge.label}
+                                    </Badge>
+                                  </div>
+                                  <p className="text-xs text-slate-500 mb-3">{step.description}</p>
+
+                                  {inputNames.length > 0 && (
+                                    <div>
+                                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Data Sources Used</p>
+                                      <div className="flex flex-wrap gap-2">
+                                        {inputNames.map(name => (
+                                          <span key={name} className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-600">
+                                            <Plus className="w-3 h-3 text-slate-400" />
+                                            {name}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {/* Output step */}
+                        {workflow && (
+                          <div className="bg-white rounded-xl border border-emerald-200 p-5">
+                            <div className="flex items-start gap-4">
+                              <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0">
+                                <Check className="w-4 h-4 text-white" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <h4 className="text-sm font-bold text-slate-900">{workflow.output.title}</h4>
+                                  <Badge className="text-[9px] font-bold border-0 uppercase bg-emerald-100 text-emerald-700">OUTPUT</Badge>
+                                </div>
+                                <p className="text-xs text-slate-500">{workflow.output.description}</p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
-          </div>
+          </ScrollArea>
 
+          {/* Bottom toolbar */}
+          {!showOutput && (
+            <div className="h-10 border-t border-slate-200 bg-white flex items-center justify-end px-4 flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setZoomLevel(Math.max(50, zoomLevel - 10))}>
+                  <Minus className="w-3.5 h-3.5 text-slate-400" />
+                </Button>
+                <span className="text-xs text-slate-400 w-10 text-center">{zoomLevel}%</span>
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setZoomLevel(Math.min(200, zoomLevel + 10))}>
+                  <Plus className="w-3.5 h-3.5 text-slate-400" />
+                </Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7">
+                  <Maximize2 className="w-3.5 h-3.5 text-slate-400" />
+                </Button>
+              </div>
+            </div>
+          )}
         </main>
+
+        {/* === RIGHT PANEL: Plan / Input Config / Output Config === */}
+        {rightPanelOpen ? (
+          <aside className="w-[20%] flex-shrink-0 border-l border-gray-100 bg-white flex flex-col">
+            {/* Tabs header */}
+            <div className="flex items-center px-3 py-2 border-b border-gray-100 gap-0.5 flex-shrink-0">
+              {(['plan', 'input', 'output'] as const).map(tab => {
+                const icons = { plan: Sparkles, input: Upload, output: BarChart3 };
+                const labels = { plan: 'Plan', input: 'Input', output: 'Output' };
+                const TabIcon = icons[tab];
+                return (
+                  <button key={tab} onClick={() => setRightPanelTab(tab)}
+                    className={cn('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-150',
+                      rightPanelTab === tab ? 'bg-violet-50 text-violet-700' : 'text-gray-400 hover:bg-gray-50 hover:text-gray-700'
+                    )}>
+                    <TabIcon className="w-3 h-3" />
+                    {labels[tab]}
+                  </button>
+                );
+              })}
+              <div className="flex-1" />
+              <Button variant="ghost" size="icon" className="h-7 w-7 transition-all duration-200" onClick={() => setRightPanelOpen(false)} title="Collapse panel">
+                <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
+              </Button>
+            </div>
+
+            <ScrollArea className="flex-1">
+              <div className="p-4">
+
+                {/* -- Plan tab -- */}
+                {rightPanelTab === 'plan' && workflow && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Sparkles className="w-4 h-4 text-violet-600" />
+                      <h3 className="text-sm font-bold text-slate-900">Query Execution Plan</h3>
+                    </div>
+                    <div className="space-y-1">
+                      {workflow.steps.map((step, idx) => {
+                        const cfg = STC[step.type] ?? STC.analyze;
+                        return (
+                          <div key={step.id} className="flex items-start gap-3 p-3 rounded-xl hover:bg-slate-50 transition-colors">
+                            <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold text-white bg-[#26064A]">
+                              {idx + 1}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-semibold text-slate-800">{step.name}</p>
+                              <p className="text-xs text-slate-400 truncate">{step.description}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {/* Output */}
+                      <div className="flex items-start gap-3 p-3 rounded-xl hover:bg-slate-50 transition-colors">
+                        <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 bg-emerald-500">
+                          <Check className="w-3.5 h-3.5 text-white" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-slate-800">{workflow.output.title}</p>
+                          <p className="text-xs text-slate-400">{workflow.output.type.toUpperCase()} output</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* -- Input Config tab -- */}
+                {rightPanelTab === 'input' && workflow && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Upload className="w-4 h-4 text-violet-600" />
+                      <h3 className="text-sm font-bold text-slate-900">Input Configuration</h3>
+                    </div>
+
+                    {/* Active Sources */}
+                    <div className="mb-6">
+                      <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 block">Active Sources</Label>
+                      <div className="space-y-2">
+                        {(() => {
+                          // Group inputs into display groups
+                          const groups: { name: string; badge: string; items: typeof workflow.inputs }[] = [];
+                          const edcInputs = workflow.inputs.filter(i => i.name.includes('Invoice') || i.name.includes('Data') || i.name.includes('MTOW'));
+                          const metaInputs = workflow.inputs.filter(i => !edcInputs.includes(i));
+
+                          if (edcInputs.length > 0) {
+                            groups.push({ name: 'Electronic Data Capture (EDC) Export', badge: `${edcInputs.length} FILES`, items: edcInputs });
+                          }
+                          if (metaInputs.length > 0) {
+                            groups.push({ name: 'Source Document Metadata', badge: 'CSV', items: metaInputs });
+                          }
+
+                          return groups.map((g, i) => (
+                            <div key={i} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl">
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center">
+                                  <Database className="w-4 h-4 text-violet-700" />
+                                </div>
+                                <span className="text-sm font-medium text-slate-700">{g.name}</span>
+                              </div>
+                              <Badge variant="secondary" className="text-[10px] bg-slate-200 text-slate-600">{g.badge}</Badge>
+                            </div>
+                          ));
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* Global Parameters */}
+                    <div>
+                      <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Global Parameters</Label>
+                      <p className="text-xs text-slate-500 leading-relaxed">Configure global input parameters and ingestion rules</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* -- Output Config tab -- */}
+                {rightPanelTab === 'output' && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <BarChart3 className="w-4 h-4 text-violet-600" />
+                      <h3 className="text-sm font-bold text-slate-900">Output Configuration</h3>
+                    </div>
+
+                    {/* Output Layout */}
+                    <div className="mb-6">
+                      <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 block">Output Layout</Label>
+                      <div className="flex gap-2">
+                        {([
+                          { key: 'table' as const, icon: Table2, label: 'Table' },
+                          { key: 'dashboard' as const, icon: LayoutDashboard, label: 'Dashboard' },
+                          { key: 'split' as const, icon: SplitSquareHorizontal, label: 'Split View' },
+                        ]).map(opt => (
+                          <button key={opt.key} onClick={() => setDashboardLayout(opt.key)}
+                            className={cn('flex-1 flex flex-col items-center gap-1.5 p-3 rounded-xl border transition-colors',
+                              dashboardLayout === opt.key ? 'bg-violet-50 border-violet-200 text-violet-700' : 'bg-white border-slate-200 text-slate-400 hover:text-slate-600'
+                            )}>
+                            <opt.icon className="w-5 h-5" />
+                            <span className="text-[10px] font-medium uppercase">{opt.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Dashboard KPIs */}
+                    <div className="mb-6">
+                      <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 block">Dashboard KPIs</Label>
+                      <div className="space-y-2">
+                        {([
+                          { key: 'totalRecords' as const, label: 'Total Records Scanned', badge: null },
+                          { key: 'duplicatesFound' as const, label: 'Duplicates Found', badge: null },
+                          { key: 'amountAtRisk' as const, label: 'Amount at Risk', badge: null },
+                          { key: 'comparisonLastRun' as const, label: 'Comparison vs Last Run', badge: 'DELTA' },
+                          { key: 'duplicateTrend' as const, label: 'Duplicate Trend (30 days)', badge: null },
+                        ]).map(item => (
+                          <label key={item.key} className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
+                            <input type="checkbox" checked={kpiChecks[item.key]}
+                              onChange={e => setKpiChecks(prev => ({ ...prev, [item.key]: e.target.checked }))}
+                              className="w-4 h-4 rounded border-slate-300 text-violet-700 focus:ring-violet-500" />
+                            <span className="text-xs text-slate-700 flex-1">{item.label}</span>
+                            {item.badge && (
+                              <Badge variant="secondary" className="text-[9px] bg-amber-100 text-amber-700">{item.badge}</Badge>
+                            )}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* AI Suggestions */}
+                    <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Label className="text-[10px] font-bold text-violet-700 uppercase tracking-widest">AI Suggestions</Label>
+                        <Badge className="bg-violet-100 text-violet-700 border-0 text-[9px] font-bold">SMART</Badge>
+                      </div>
+                      <div className="space-y-2">
+                        {([
+                          { key: 'trendColumn' as const, label: 'Add "Trend vs Previous Run" column to track changes between executions' },
+                          { key: 'varianceHighlight' as const, label: 'Enable variance highlighting when amount difference exceeds tolerance' },
+                          { key: 'timeToResolution' as const, label: 'Include "Time to Resolution" metric for flagged items' },
+                          { key: 'autoGroupVendor' as const, label: 'Auto-group results by vendor for easier review' },
+                        ]).map(item => (
+                          <label key={item.key} className="flex items-start gap-3 p-2 rounded-lg hover:bg-violet-100/50 cursor-pointer">
+                            <input type="checkbox" checked={aiSuggestions[item.key]}
+                              onChange={e => setAiSuggestions(prev => ({ ...prev, [item.key]: e.target.checked }))}
+                              className="w-4 h-4 rounded border-violet-300 text-violet-700 focus:ring-violet-500 mt-0.5" />
+                            <span className="text-xs text-slate-700 leading-relaxed">{item.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            </ScrollArea>
+          </aside>
+        ) : (
+          /* Collapsed right panel — thin vertical strip with expand button */
+          <div className="w-10 flex-shrink-0 border-l border-gray-100 bg-white flex flex-col items-center py-3 gap-3">
+            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg hover:bg-gray-50 transition-all duration-200" onClick={() => setRightPanelOpen(true)} title="Expand panel">
+              <ChevronRight className="w-4 h-4 text-gray-400 rotate-180" />
+            </Button>
+            {(['plan', 'input', 'output'] as const).map(tab => {
+              const icons = { plan: Sparkles, input: Upload, output: BarChart3 };
+              const TabIcon = icons[tab];
+              return (
+                <Button key={tab} variant="ghost" size="icon"
+                  className={cn('h-8 w-8 rounded-lg transition-all duration-150', rightPanelTab === tab ? 'bg-violet-50 text-violet-700' : 'text-gray-400 hover:bg-gray-50')}
+                  onClick={() => { setRightPanelTab(tab); setRightPanelOpen(true); }}
+                  title={tab === 'plan' ? 'Plan' : tab === 'input' ? 'Input Config' : 'Output Config'}>
+                  <TabIcon className="w-3.5 h-3.5" />
+                </Button>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useEffect, useState, useRef, Suspense } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Workflow, WorkflowInput, WorkflowResult } from '@/lib/types';
 import { getWorkflow, incrementRunCount } from '@/lib/storage';
+import { runWorkflow as mockRunWorkflow } from '@/lib/mock-api';
 
 // ── Severity ───────────────────────────────────────────────────────────────
 const SEV: Record<string, { bg: string; text: string; border: string; dot: string; label: string }> = {
@@ -269,8 +270,13 @@ interface UploadZoneProps {
 }
 
 // ── Main page ──────────────────────────────────────────────────────────────
-export default function WorkflowPage() {
-  const { id } = useParams<{ id: string }>();
+export default function WorkflowPageWrapper() {
+  return <Suspense><WorkflowPage /></Suspense>;
+}
+
+function WorkflowPage() {
+  const searchParams = useSearchParams();
+  const id = searchParams.get('id') ?? '';
   const router = useRouter();
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [fileMap, setFileMap] = useState<FileMap>({});
@@ -279,6 +285,7 @@ export default function WorkflowPage() {
   const [error, setError] = useState<string | null>(null);
   const [runStage, setRunStage] = useState(0);
   const [activeTab, setActiveTab] = useState<'run' | 'details'>('run');
+  const [wizardStep, setWizardStep] = useState<'upload' | 'map_files' | 'run'>('upload');
   const resultsRef = useRef<HTMLDivElement>(null);
   const dropZoneRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -286,6 +293,34 @@ export default function WorkflowPage() {
     const w = getWorkflow(id);
     if (!w) { router.push('/'); return; }
     setWorkflow(w);
+
+    // Auto-populate dummy files for every input so the prototype works without uploads
+    const dummyMap: FileMap = {};
+    for (const input of w.inputs) {
+      const fileName = input.name.toLowerCase().replace(/\s+/g, '_');
+      let content = '';
+      let mimeType = 'text/plain';
+
+      if (input.type === 'csv') {
+        mimeType = 'text/csv';
+        content = `id,name,amount,date,status\n1,Sample Entry A,48000,2026-01-15,approved\n2,Sample Entry B,92500,2026-01-18,pending\n3,Sample Entry C,13750,2026-01-22,approved\n4,Sample Entry D,205000,2026-02-01,flagged\n5,Sample Entry E,67000,2026-02-14,approved`;
+      } else if (input.type === 'pdf') {
+        mimeType = 'application/pdf';
+        content = `%PDF-1.4 dummy content for ${input.name}`;
+      } else if (input.type === 'image') {
+        mimeType = 'image/png';
+        content = `dummy image data for ${input.name}`;
+      } else if (input.type === 'sql') {
+        mimeType = 'text/plain';
+        content = `SELECT * FROM transactions WHERE amount > 10000 ORDER BY date DESC;`;
+      }
+
+      const blob = new Blob([content], { type: mimeType });
+      const ext = input.type === 'csv' ? 'csv' : input.type === 'pdf' ? 'pdf' : input.type === 'image' ? 'png' : 'sql';
+      const file = new File([blob], `${fileName}_sample.${ext}`, { type: mimeType });
+      dummyMap[input.id] = [file];
+    }
+    setFileMap(dummyMap);
   }, [id, router]);
 
   function handleFileSelect(inputId: string, files: FileList | null) {
@@ -337,18 +372,10 @@ export default function WorkflowPage() {
     }, 2000);
 
     try {
-      const formData = new FormData();
-      formData.append('workflow', JSON.stringify(workflow));
-      for (const [inputId, files] of Object.entries(fileMap)) {
-        files.forEach((file, idx) => formData.append(`file_${inputId}_${idx}`, file));
-      }
-
-      const res = await fetch('/api/run-workflow', { method: 'POST', body: formData });
-      const data = await res.json();
+      const data = await mockRunWorkflow(workflow);
 
       clearInterval(stageInterval);
       setRunStage(STAGES.length - 1);
-      if (data.error) throw new Error(data.error);
 
       setResult(data.result as WorkflowResult);
       incrementRunCount(workflow.id);
@@ -392,19 +419,19 @@ export default function WorkflowPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-violet-50/20">
       {/* Header */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-50">
+      <header className="bg-white border-b border-gray-100 sticky top-0 z-50">
         <div className="max-w-5xl mx-auto px-6 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Link href="/" className="flex items-center gap-1.5 text-slate-500 hover:text-slate-800 transition-colors text-sm">
+            <Link href="/" className="flex items-center gap-1.5 text-gray-400 hover:text-gray-800 transition-all duration-200 text-sm">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
               All Workflows
             </Link>
-            <div className="h-4 w-px bg-slate-200" />
-            <span className="text-sm font-medium text-slate-800 truncate max-w-xs">{workflow.name}</span>
+            <div className="h-4 w-px bg-gray-200" />
+            <span className="text-sm font-medium text-gray-800 truncate max-w-xs">{workflow.name}</span>
           </div>
-          <div className="flex items-center gap-2 text-xs text-slate-400">
+          <div className="flex items-center gap-2 text-xs text-gray-400">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /></svg>
             {workflow.runCount} runs
           </div>
@@ -413,7 +440,7 @@ export default function WorkflowPage() {
 
       <div className="max-w-5xl mx-auto px-6 py-8">
         {/* Workflow header */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-6 shadow-sm">
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6 shadow-none">
           <div className="flex items-start gap-4">
             <div className="flex-1">
               <div className="flex items-center gap-2 mb-1.5">
@@ -478,7 +505,7 @@ export default function WorkflowPage() {
         )}
 
         {/* ── RUN TAB ──────────────────────────────────────────────────────── */}
-        {activeTab === 'run' && (
+        {activeTab === 'run' && wizardStep === 'upload' && (
           <>
             {/* Input legend */}
             <div className="flex flex-wrap gap-2 mb-4">
@@ -499,35 +526,168 @@ export default function WorkflowPage() {
               {workflow.inputs.map((input) => renderUploadZone(input))}
             </div>
 
-            {/* Run CTA */}
+            {/* Continue to Map Files */}
             <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-6 shadow-sm">
-              {!allRequiredFilled && (
-                <div className="flex items-center gap-2.5 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4">
-                  <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                  Upload all required files ({workflow.inputs.filter(i => i.required && !(fileMap[i.id]?.length)).map(i => i.name).join(', ')}) to continue
-                </div>
-              )}
+              <button onClick={() => setWizardStep('map_files')} disabled={!allRequiredFilled}
+                className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 text-sm shadow-lg shadow-blue-200 disabled:shadow-none">
+                Continue to Map Files
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+              </button>
+            </div>
 
-              {isRunning ? (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                    <span className="text-sm font-medium text-slate-700">{STAGES[runStage]}</span>
-                    <span className="text-xs text-slate-400 ml-auto">{runStage + 1}/{STAGES.length}</span>
+          </>
+        )}
+
+        {/* ── MAP FILES STEP ───────────────────────────────────────────────── */}
+        {activeTab === 'run' && wizardStep === 'map_files' && (
+          <div className="flex gap-6">
+            {/* Left: AI chat + step progress */}
+            <div className="w-64 flex-shrink-0 space-y-4">
+              {/* Steps sidebar */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+                {[
+                  { label: 'Write prompt', done: true },
+                  { label: 'Upload Files', done: true },
+                  { label: 'Map Files', done: false, current: true },
+                  { label: 'Map Columns', done: false },
+                  { label: 'Review & Run', done: false },
+                ].map((s, i) => (
+                  <div key={i} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
+                    <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold ${
+                      s.done ? 'bg-emerald-500 text-white' :
+                      s.current ? 'bg-blue-600 text-white' :
+                      'bg-slate-100 text-slate-400'
+                    }`}>
+                      {s.done ? '✓' : i + 1}
+                    </div>
+                    <span className={`text-sm ${s.current ? 'font-semibold text-slate-900' : s.done ? 'text-slate-500' : 'text-slate-400'}`}>{s.label}</span>
                   </div>
-                  <div className="w-full bg-slate-100 rounded-full h-1.5">
-                    <div className="bg-blue-600 h-1.5 rounded-full transition-all duration-1000"
-                      style={{ width: `${((runStage + 1) / STAGES.length) * 100}%` }} />
-                  </div>
-                  <div className="flex gap-1">
-                    {STAGES.map((_, i) => (
-                      <div key={i} className={`flex-1 h-1 rounded-full transition-colors ${i <= runStage ? 'bg-blue-400' : 'bg-slate-200'}`} />
-                    ))}
-                  </div>
+                ))}
+              </div>
+
+              {/* AI chat bubble */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">I</div>
+                  <span className="text-xs font-semibold text-slate-700">AI Assistant</span>
+                  <span className="ml-auto text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">EXAMPLE</span>
                 </div>
-              ) : (
-                <button onClick={runWorkflow} disabled={!allRequiredFilled}
-                  className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 text-sm shadow-lg shadow-blue-200 disabled:shadow-none">
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  I&apos;ve pre-populated the required files for you. Click <strong>Verify with Ira</strong> to proceed.
+                </p>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Great! I&apos;ve detected all required files. I&apos;ve automatically suggested mappings for them. Please review the <strong>Map Files</strong> step in the middle section.
+                </p>
+                <div className="pt-1">
+                  <input placeholder="Describe what you need..." className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50" readOnly />
+                </div>
+              </div>
+            </div>
+
+            {/* Center: File mapping cards */}
+            <div className="flex-1 min-w-0">
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                {/* Header */}
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                      <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
+                    </div>
+                    <div>
+                      <h2 className="text-base font-bold text-slate-900">File Mapping</h2>
+                      <p className="text-xs text-slate-500">Ira has automatically suggested these file associations</p>
+                    </div>
+                  </div>
+                  <button className="flex items-center gap-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg px-3 py-1.5 transition-colors">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
+                    AI-SUGGESTED MAPPINGS
+                  </button>
+                </div>
+
+                {/* Mapping cards */}
+                <div className="p-5 space-y-4">
+                  {workflow.inputs.map((input, i) => {
+                    const mappedFile = fileMap[input.id]?.[0];
+                    const confidence = 98 - i * 3;
+                    return (
+                      <div key={input.id} className="border border-slate-200 rounded-xl overflow-hidden">
+                        <div className="grid grid-cols-2">
+                          {/* Expected schema */}
+                          <div className="p-4 bg-slate-50 border-r border-slate-200">
+                            <div className="flex items-center gap-1.5 mb-2">
+                              <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Expected Schema</span>
+                            </div>
+                            <p className="text-sm font-semibold text-slate-900 mb-1">{input.name}</p>
+                            <p className="text-xs text-slate-500 leading-relaxed">{input.description}</p>
+                          </div>
+                          {/* Mapped source */}
+                          <div className="p-4 bg-white">
+                            <div className="flex items-center gap-1.5 mb-2">
+                              <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Mapped Source</span>
+                              <span className="ml-auto text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-full">{confidence}% MATCH</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-slate-700 truncate flex-1">
+                                {mappedFile?.name ?? `${input.name.toLowerCase().replace(/\s+/g, '_')}_sample.${input.type}`}
+                              </span>
+                              <button className="text-xs text-blue-600 hover:text-blue-700 font-medium flex-shrink-0">Change</button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Footer CTA */}
+                <div className="px-5 py-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between">
+                  <p className="text-xs text-slate-500">Review each mapping carefully before proceeding to column alignment.</p>
+                  <button onClick={() => setWizardStep('run')}
+                    className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors">
+                    Confirm &amp; Align Columns
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* Back link */}
+              <button onClick={() => setWizardStep('upload')} className="mt-3 text-xs text-slate-400 hover:text-slate-600 transition-colors">
+                ← Back to Upload Files
+              </button>
+            </div>
+
+            {/* Right: Query Execution Plan */}
+            <div className="w-56 flex-shrink-0">
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Query Execution Plan</h3>
+                <div className="space-y-3">
+                  {workflow.steps.map((step, i) => (
+                    <div key={step.id} className="flex items-start gap-2.5">
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold mt-0.5 ${
+                        i === workflow.steps.length - 1 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                      }`}>{i + 1}</div>
+                      <div>
+                        <p className="text-xs font-semibold text-slate-800">{step.name}</p>
+                        <p className="text-[10px] text-slate-400 leading-relaxed mt-0.5">{step.description}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── RUN STEP (error + results) ───────────────────────────────────── */}
+        {activeTab === 'run' && wizardStep === 'run' && (
+          <>
+            {/* Run trigger */}
+            {!isRunning && !result && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-6 shadow-sm">
+                <button onClick={runWorkflow}
+                  className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 text-sm shadow-lg shadow-blue-200">
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -535,8 +695,25 @@ export default function WorkflowPage() {
                   Run Workflow
                   {totalFiles > 0 && <span className="bg-white/20 px-2 py-0.5 rounded-full text-xs">{totalFiles} file{totalFiles !== 1 ? 's' : ''}</span>}
                 </button>
-              )}
-            </div>
+                <button onClick={() => setWizardStep('map_files')} className="mt-3 w-full text-xs text-slate-400 hover:text-slate-600 transition-colors">
+                  ← Back to Map Files
+                </button>
+              </div>
+            )}
+
+            {/* Running progress */}
+            {isRunning && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-6 shadow-sm space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                  <span className="text-sm font-medium text-slate-700">{STAGES[runStage]}</span>
+                  <span className="text-xs text-slate-400 ml-auto">{runStage + 1}/{STAGES.length}</span>
+                </div>
+                <div className="w-full bg-slate-100 rounded-full h-1.5">
+                  <div className="bg-blue-600 h-1.5 rounded-full transition-all duration-1000" style={{ width: `${((runStage + 1) / STAGES.length) * 100}%` }} />
+                </div>
+              </div>
+            )}
 
             {/* Error */}
             {error && (
@@ -545,11 +722,6 @@ export default function WorkflowPage() {
                 <div>
                   <p className="text-sm font-medium text-red-800">Workflow failed</p>
                   <p className="text-sm text-red-600 mt-0.5">{error}</p>
-                  {error.includes('ANTHROPIC_API_KEY') && (
-                    <p className="text-xs text-red-500 mt-1 bg-red-100 rounded-lg px-3 py-2">
-                      Add your API key: open <code className="font-mono bg-red-200 px-1 rounded">.env.local</code> and set <code className="font-mono bg-red-200 px-1 rounded">ANTHROPIC_API_KEY=sk-ant-...</code>, then restart the server.
-                    </p>
-                  )}
                 </div>
               </div>
             )}
@@ -710,7 +882,7 @@ export default function WorkflowPage() {
                 )}
 
                 <div className="text-center pt-2">
-                  <button onClick={() => { setResult(null); setFileMap({}); }} className="text-sm text-slate-500 hover:text-slate-800 transition-colors">
+                  <button onClick={() => { setResult(null); setFileMap({}); setWizardStep('upload'); }} className="text-sm text-slate-500 hover:text-slate-800 transition-colors">
                     ↺ Run again with different files
                   </button>
                 </div>
